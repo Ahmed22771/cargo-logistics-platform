@@ -27,14 +27,11 @@ async function reverseGeocode(lat, lng) {
 }
 
 async function searchPlaces(q) {
-  try {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&countrycodes=om&limit=6&q=${encodeURIComponent(q)}`
-    );
-    return await res.json();
-  } catch {
-    return [];
-  }
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/search?format=json&countrycodes=om&limit=6&q=${encodeURIComponent(q)}`
+  );
+  if (!res.ok) throw new Error("search_failed");
+  return await res.json();
 }
 
 export function MapPicker({ value, onConfirm, testIdPrefix = "map", accentConfirm = true, confirmLabel }) {
@@ -45,6 +42,7 @@ export function MapPicker({ value, onConfirm, testIdPrefix = "map", accentConfir
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const [selected, setSelected] = useState(value || null);
   const [geoLoading, setGeoLoading] = useState(false);
 
@@ -95,9 +93,16 @@ export function MapPicker({ value, onConfirm, testIdPrefix = "map", accentConfir
     e?.preventDefault();
     if (!query.trim()) return;
     setSearching(true);
-    const r = await searchPlaces(query);
-    setResults(r);
-    setSearching(false);
+    setSearchError(false);
+    try {
+      const r = await searchPlaces(query);
+      setResults(r);
+    } catch {
+      setSearchError(true);
+      setResults([]);
+    } finally {
+      setSearching(false);
+    }
   };
 
   const pickResult = (r) => {
@@ -146,6 +151,15 @@ export function MapPicker({ value, onConfirm, testIdPrefix = "map", accentConfir
           </div>
         )}
       </form>
+
+      <p className="text-xs text-slate-400 flex items-center gap-1.5" data-testid={`${testIdPrefix}-hint`}>
+        <MapPin className="w-3.5 h-3.5 text-[#F1701E]" /> {t("shipment.tapMapHint")}
+      </p>
+      {searchError && (
+        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2" data-testid={`${testIdPrefix}-search-error`}>
+          {t("shipment.searchUnavailable")}
+        </p>
+      )}
 
       <div className="relative w-full h-[320px] md:h-[380px] rounded-xl border border-slate-300 overflow-hidden shadow-inner bg-slate-100">
         <div ref={mapEl} className="w-full h-full" data-testid={`${testIdPrefix}-canvas`} />

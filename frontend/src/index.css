@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import 'leaflet/dist/leaflet.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --cargo-navy: #16233A;
+    --cargo-navy-dark: #0E1726;
+    --cargo-orange: #F1701E;
+    --cargo-orange-dark: #D95E0E;
+
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 218 45% 16%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 218 45% 16%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 24 88% 53%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 24 88% 53%;
+    --radius: 0.625rem;
+}
+
+* {
+    border-color: hsl(var(--border));
+}
+
+body {
+    margin: 0;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+html[lang='ar'] body,
+html[dir='rtl'] body {
+    font-family: 'Cairo', 'Tajawal', system-ui, sans-serif;
+}
+
+.font-mono {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+}
+
+/* Leaflet sizing */
+.leaflet-container {
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    font-family: inherit;
+}
+
+/* RTL: keep phone inputs LTR */
+.force-ltr {
+    direction: ltr;
+    unicode-bidi: plaintext;
+}
+
+/* utility fade */
+@keyframes cargo-fade-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+    animation: cargo-fade-in 0.4s ease-out both;
+}
+
+::selection {
+    background: var(--cargo-orange);
+    color: #fff;
+}
+
+/* thin scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }

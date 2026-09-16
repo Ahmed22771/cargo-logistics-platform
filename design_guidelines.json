@@ -1,0 +1,138 @@
+{
+  "project": "CARGO Logistics Marketplace (Oman & Middle East)",
+  "version": "2.0.0",
+  "identity": {
+    "brand_name": "CARGO",
+    "arabic_tagline": "نقل ذكي.. يصل بثقة",
+    "english_tagline": "Smart Logistics.. Delivered with Trust",
+    "positioning": "Serious, high-trust, secure, bilingual (Arabic default + English) logistics tech platform connecting shippers, drivers, fleet providers, and enterprise logistics in Oman and the GCC.",
+    "design_tone": "Enterprise technology, restrained elegance, zero slop, high visual density, high readability, tactical clarity."
+  },
+  "color_palette": {
+    "primary": {
+      "hex": "#16233A",
+      "hsl": "218 45% 16%",
+      "description": "Deep Slate Navy Blue from the official CARGO wordmark & C-mark container. Used for primary headers, navigation bars, main action buttons, active navigation states, and hero sections."
+    },
+    "primary_hover": {
+      "hex": "#0E1726",
+      "hsl": "218 50% 10%"
+    },
+    "accent": {
+      "hex": "#F1701E",
+      "hsl": "24 88% 53%",
+      "description": "Vibrant Motion Orange from the logo's three speed bars inside the C mark. Used for key CTAs, highlights, interactive map pickup/dropoff focal pins, active status tags, and primary action accents."
+    },
+    "accent_hover": {
+      "hex": "#D95E0E",
+      "hsl": "24 88% 45%"
+    },
+    "neutral_bg": {
+      "light": "#F8FAFC",
+      "card_bg": "#FFFFFF",
+      "dark_surface": "#0F172A",
+      "border": "#E2E8F0"
+    },
+    "text": {
+      "primary": "#0F172A",
+      "secondary": "#475569",
+      "muted": "#64748B",
+      "inverse": "#FFFFFF"
+    },
+    "shipment_statuses": {
+      "draft": { "bg": "#F1F5F9", "text": "#475569", "border": "#CBD5E1", "label_en": "Draft", "label_ar": "مسودة" },
+      "pending_bids": { "bg": "#EFF6FF", "text": "#1D4ED8", "border": "#BFDBFE", "label_en": "Pending Bids", "label_ar": "في انتظار العروض" },
+      "bid_accepted": { "bg": "#FEF3C7", "text": "#B45309", "border": "#FDE68A", "label_en": "Bid Accepted", "label_ar": "تم قبول العرض" },
+      "in_transit": { "bg": "#FFF7ED", "text": "#C2410C", "border": "#FFEDD5", "label_en": "In Transit", "label_ar": "قيد النقل" },
+      "delivered": { "bg": "#ECFDF5", "text": "#047857", "border": "#A7F3D0", "label_en": "Delivered", "label_ar": "تم التسليم" },
+      "cancelled": { "bg": "#FEF2F2", "text": "#B91C1C", "border": "#FECACA", "label_en": "Cancelled", "label_ar": "ملغي" }
+    }
+  },
+  "typography": {
+    "fonts": {
+      "arabic": {
+        "family": "Cairo, Tajawal, system-ui, sans-serif",
+        "google_font_import": "https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap",
+        "usage": "Primary font when language is Arabic (default)."
+      },
+      "english": {
+        "family": "Plus Jakarta Sans, system-ui, sans-serif",
+        "usage": "Primary font when language is English."
+      },
+      "mono": {
+        "family": "JetBrains Mono, ui-monospace, monospace",
+        "usage": "Used for Tracking IDs, License Plate Numbers, Oman CR Numbers, and API/Audit data."
+      }
+    },
+    "hierarchy": {
+      "h1": "text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-[#16233A]",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight text-[#16233A]",
+      "h3": "text-xl sm:text-2xl font-semibold text-[#16233A]",
+      "h4": "text-lg font-semibold text-[#0F172A]",
+      "body": "text-base text-[#334155] leading-relaxed",
+      "subtext": "text-sm text-[#64748B]",
+      "caption": "text-xs text-[#94A3B8] font-medium"
+    }
+  },
+  "bilingual_rtl_ltr_strategy": {
+    "default_language": "ar",
+    "direction_attribute": "dir='rtl' for Arabic, dir='ltr' for English",
+    "layout_rules": [
+      "Use Tailwind logical utilities: ms-* (margin-start), me-* (margin-end), ps-* (padding-start), pe-* (padding-end) instead of ml/mr/pl/pr.",
+      "Icons indicating forward motion (e.g. ChevronRight, ArrowRight, Truck) MUST flip horizontally in RTL mode using 'rtl:rotate-180' or 'rtl:-scale-x-100'.",
+      "Route display (From -> To): In Arabic (RTL), origin is on the right, arrow points to the left (من -> إلى). In English (LTR), origin is on left, arrow points right.",
+      "Table headers and alignment: text-right for RTL Arabic, text-left for LTR English.",
+      "Phone number inputs (+968 XXXXXXXX) must keep LTR direction explicitly (dir='ltr') for standard digit ordering even in Arabic mode."
+    ]
+  },
+  "portals_layout_guide": {
+    "public_landing": {
+      "header": "Sticky navbar with CARGO logo, language switcher (AR/EN), portal quick links, Login modal trigger button.",
+      "hero": "Bold dark navy backdrop with subtle geometric grid overlay, high-impact headline, Dual CTA (Create Shipment / Join as Driver), live stats strip (Shipments Completed, Active Drivers in Oman, Avg Response Time).",
+      "sections": "How It Works (3-step visual cards), Core Services (Land Freight, Container Trucking, Flatbed & Heavy Haul, Express Cargo), Fleet Types, Oman Coverage Map, Testimonials, Contact & Support."
+    },
+    "customer_portal": {
+      "path": "/customer",
+      "sidebar_nav": "Home/Dashboard, My Shipments, Create Shipment, Saved Locations, Notifications, Profile & Security.",
+      "key_feature": "Create Shipment Wizard with interactive map location selection, automatic route distance calculation, and instant bid comparison grid."
+    },
+    "driver_portal": {
+      "path": "/driver",
+      "sidebar_nav": "Dashboard, Available Loads, My Bids, Active Trip, Trip History, Vehicle & License Documents, Profile.",
+      "key_feature": "Mobile-optimized interface, large tap targets, high contrast load details, status progression button (Start Pickup -> Goods Loaded -> In Transit -> Arrived -> Delivered)."
+    },
+    "transport_provider_portal": {
+      "path": "/provider",
+      "sidebar_nav": "Overview, Opportunities Board, Fleet Management, Drivers List, Active Trips, Revenue & Invoices.",
+      "key_feature": "Fleet assignment modal, multi-bid management, vehicle dispatching matrix."
+    },
+    "admin_portal": {
+      "path": "/admin",
+      "sidebar_nav": "Command Center, Driver & Provider Verification, All Shipments, Active Trips, User Management, Audit Logs, Settings.",
+      "key_feature": "Density-focused data tables with filter drawer, quick approval/rejection drawer for driver licenses & Oman commercial registrations (CR)."
+    }
+  },
+  "component_treatments": {
+    "cards": "bg-white border border-[#E2E8F0] rounded-xl shadow-sm hover:shadow-md transition-shadow duration-200 p-5 md:p-6",
+    "buttons": {
+      "primary": "bg-[#16233A] hover:bg-[#0E1726] text-white font-semibold py-2.5 px-5 rounded-lg transition-all duration-150 active:scale-[0.98] shadow-sm flex items-center justify-center gap-2",
+      "accent": "bg-[#F1701E] hover:bg-[#D95E0E] text-white font-semibold py-2.5 px-5 rounded-lg transition-all duration-150 active:scale-[0.98] shadow-sm flex items-center justify-center gap-2",
+      "secondary": "bg-slate-100 hover:bg-slate-200 text-[#16233A] font-semibold py-2.5 px-5 rounded-lg transition-all duration-150",
+      "outline": "border border-[#16233A] text-[#16233A] hover:bg-[#16233A]/5 font-semibold py-2.5 px-5 rounded-lg transition-all"
+    },
+    "inputs": "w-full bg-white border border-slate-300 focus:border-[#F1701E] focus:ring-2 focus:ring-[#F1701E]/20 rounded-lg px-3.5 py-2.5 text-slate-900 placeholder:text-slate-400 text-sm outline-none transition-all",
+    "tables": "w-full text-sm text-slate-700 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm",
+    "map_container": "relative w-full h-[380px] md:h-[450px] rounded-xl border border-slate-300 overflow-hidden shadow-inner bg-slate-100"
+  },
+  "image_urls": {
+    "hero_background": "https://images.pexels.com/photos/36198012/pexels-photo-36198012.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "container_port": "https://images.unsplash.com/photo-1759272840538-ae4b07214c71?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDZ8MHwxfHNlYXJjaHwzfHxjYXJnbyUyMGNvbnRhaW5lciUyMHBvcnQlMjBzaGlwcGluZyUyMGxvZ2lzdGljcyUyMGhpZ2h3YXl8ZW58MHx8fHwxNzg5NTI4MjgwfDA&ixlib=rb-4.1.0&q=85",
+    "highway_truck": "https://images.pexels.com/photos/30484147/pexels-photo-30484147.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "oman_landscape": "https://images.unsplash.com/photo-1597002655145-374953e29f68?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njd8MHwxfHNlYXJjaHwyfHxsb2dpc3RpY3MlMjB0cnVjayUyMGNvbnRhaW5lciUyMGZyZWlnaHQlMjBvbWFuJTIwbWlkZGxlJTIwZWFzdHxlbnwwfHx8fDE3ODk1MjgyNzZ8MA&ixlib=rb-4.1.0&q=85"
+  },
+  "universal_guidelines": {
+    "data_testid_requirement": "EVERY interactive element (buttons, tabs, form fields, modals, status updates, map pin selections, language switchers, table rows, action items) MUST include an explicit data-testid attribute in kebab-case (e.g. data-testid='create-shipment-btn', data-testid='lang-switcher-ar', data-testid='accept-bid-btn').",
+    "no_transparent_overlays": "Never leave navigation headers or modal backgrounds purely transparent without a backdrop blur or solid white/navy container background.",
+    "strict_accessibility": "Ensure all text on navy (#16233A) backgrounds uses pure white (#FFFFFF), and all text on light surfaces satisfies WCAG AA contrast (contrast ratio > 4.5:1)."
+  }
+}

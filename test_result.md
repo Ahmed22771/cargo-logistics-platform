@@ -152,3 +152,40 @@ agent_communication:
       message: "Phase 2A map fix complete. Please test the Customer CreateShipment flow. Login is DEMO OTP: on the Login page pick role Customer, enter phone +96890000001, request OTP (the app returns/echoes a demo code), verify. Then start a new shipment. Focus: (1) Step Pickup shows 'أين توجد شحنتك؟'; step Delivery shows 'إلى أين تريد نقل شحنتك؟'. (2) On each map: search a location, click on the map, drag the marker — the Selected Address panel must show a real human-readable address (road/area/city/country), NEVER raw coordinates as the primary label (coords may appear only in the small grey Coordinates line). (3) Pickup and delivery must be independent — setting delivery must not change pickup. (4) Confirm each and complete the full wizard through to Publish; verify shipment is created. (5) Test both Arabic and English (language switcher) and confirm RTL/LTR not broken. Credentials in /app/memory/test_credentials.md."
     - agent: "testing"
       message: "✅ TESTING COMPLETE - ALL CRITICAL TESTS PASSED. MapPicker reverse geocoding bug is FIXED. Tested on desktop (1920x1080). Key findings: (1) Pickup/Delivery headings correct in Arabic. (2) Reverse geocoding returns human-readable addresses in ALL scenarios (search, click, drag) - NO raw coordinates as primary address. Coordinates only in grey line. (3) Pickup/Delivery independence verified. (4) Full wizard published successfully with real addresses. (5) No raw coordinates in shipment list. NOTE: Backend was not running initially (missing MONGO_URL env var) - created /app/backend/.env with required vars. Frontend also needed /app/frontend/.env with REACT_APP_BACKEND_URL. Both services now running correctly. Language switching to English not tested (would require new session). Mobile viewport (390x844) not tested due to time. Recommend main agent to summarize and finish."
+
+  - task: "Global authentication (Customer/Driver/Provider OTP + Admin login) — 'Something went wrong' bug"
+    implemented: true
+    working: true
+    file: "backend/database.py, backend/.env, frontend/.env, backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: false
+          agent: "user"
+          comment: "Login across all portals (Customer/Driver/Provider) showed 'Something went wrong'. Shared symptom, not account-specific."
+        - working: "NA"
+          agent: "main"
+          comment: "ROOT CAUSE: backend/.env and frontend/.env were missing after the fresh GitHub import (.env is gitignored). Backend crash-looped on KeyError: 'MONGO_URL' (database.py line 4), so all auth POSTs got no response and axios apiErr fell back to the literal 'Something went wrong'. FIX (environment/startup only, no code change): backend/.env recreated with MONGO_URL, DB_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, JWT_SECRET; frontend/.env recreated with REACT_APP_BACKEND_URL; services restarted. Backend now returns HTTP 200 on /api/, CORS preflight OK, seed runs. Auth code (auth.py, AuthContext.js, Login.jsx, api.js) reviewed and correct — no code change made. Needs full regression: OTP request+verify+JWT+redirect for demo customer +96890000001, driver +96890000002, pending driver +96890000004, provider +96890000005, plus admin email/password login."
+        - working: true
+          agent: "testing"
+          comment: "✅ ALL 16 AUTH TESTS PASSED. Comprehensive regression completed via /app/backend_test.py. Results: (1) CUSTOMER OTP LOGIN (+96890000001): POST /api/auth/otp/request returned 200 with demo_code=845022. POST /api/auth/otp/verify returned 200 with JWT token and user.role=customer. GET /api/auth/me with Bearer token returned 200 with correct user. (2) DRIVER (approved) OTP LOGIN (+96890000002): Same flow, all 200 responses, user.role=driver, JWT verified. (3) PENDING DRIVER OTP LOGIN (+96890000004): CRITICAL - Login NOT blocked. OTP request/verify both returned 200, token issued, user.role=driver, verification_status=PENDING (not SUSPENDED). GET /api/auth/me returned 200. Pending drivers CAN log in as required. (4) PROVIDER OTP LOGIN (+96890000005): All 200 responses, user.role=provider, JWT verified. (5) ADMIN LOGIN (admin@cargo.om/admin123): POST /api/auth/admin/login returned 200 with token and user.role=admin. GET /api/auth/me returned 200. (6) NEGATIVE TEST: POST /api/auth/otp/verify with wrong code returned 400 with detail='Invalid or expired code' (NOT 500). NO 500 errors, NO connection errors, NO 'Something went wrong' symptom reproduced. Auth bug is FIXED."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.1"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Global authentication (Customer/Driver/Provider OTP + Admin login) — 'Something went wrong' bug"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: "AUTH FIX (Phase: global auth). Root cause was missing .env files (backend crash on KeyError MONGO_URL) causing 'Something went wrong'. .env recreated, backend healthy. Please regression-test the LOGIN flow ONLY via the API/backend: (1) POST /api/auth/otp/request then POST /api/auth/otp/verify for role=customer phone=+96890000001 -> expect {token, user} with user.role=customer. (2) Same for role=driver phone=+96890000002 (approved). (3) role=driver phone=+96890000004 (pending driver — must still be able to log in and get a token; verification_status stays PENDING/DRAFT, NOT blocked). (4) role=provider phone=+96890000005. (5) Admin: POST /api/auth/admin/login {email: admin@cargo.om, password: admin123} -> expect {token, user.role=admin}. (6) Verify the returned JWT works: GET /api/auth/me with Authorization: Bearer <token> returns the user. Confirm none return 500/network error. Do NOT test maps/shipments/bidding/etc. Credentials in /app/memory/test_credentials.md."
+    - agent: "testing"
+      message: "✅ AUTH REGRESSION COMPLETE - ALL TESTS PASSED. Tested all 5 auth flows (Customer, Driver approved, Driver pending, Provider, Admin) via backend_test.py. Key results: (1) All OTP flows working: request returns demo_code, verify returns JWT token with correct role. (2) Admin email/password login working. (3) CRITICAL: Pending driver (+96890000004) CAN log in successfully - login NOT blocked, verification_status=PENDING (not SUSPENDED). (4) All JWT tokens verified successfully via GET /api/auth/me. (5) Error handling correct: wrong OTP code returns 400 'Invalid or expired code' (not 500). (6) NO 500 errors, NO connection errors, NO 'Something went wrong' symptom. The auth bug is FIXED. Main agent should summarize and finish."

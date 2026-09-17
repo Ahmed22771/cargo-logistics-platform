@@ -86,10 +86,10 @@ class DeliveryConfirm(BaseModel):
 
 
 class ReviewCreate(BaseModel):
-    overall: int
-    service_quality: int
-    communication: int
-    on_time: int
+    overall: int = Field(ge=1, le=5)
+    service_quality: int = Field(ge=1, le=5)
+    communication: int = Field(ge=1, le=5)
+    on_time: int = Field(ge=1, le=5)
     comment: Optional[str] = ""
 
 

@@ -29,6 +29,18 @@ def auth(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def create_published_shipment(customer, title):
+    payload = {
+        "title": title, "category": "test", "quantity": "1", "weight": "100",
+        "pickup_location": {"address": "Muscat", "lat": 23.61, "lng": 58.54},
+        "delivery_location": {"address": "Sohar", "lat": 24.34, "lng": 56.72},
+        "vehicle_type": "flatbed", "status": "PUBLISHED",
+    }
+    response = requests.post(f"{API}/shipments", json=payload, headers=auth(customer["token"]))
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 # ---------- fixtures ----------
 @pytest.fixture(scope="session")
 def admin_token():
@@ -251,7 +263,7 @@ class TestAdmin:
         assert r.status_code == 200
         assert isinstance(r.json(), list)
 
-    def test_verify_driver_flow(self, admin_token):
+    def test_verify_driver_flow(self, admin_token, customer):
         # find pending driver
         r = requests.get(f"{API}/admin/drivers", headers=auth(admin_token))
         drivers = r.json()
@@ -271,6 +283,14 @@ class TestAdmin:
         r2 = requests.get(f"{API}/marketplace/shipments", headers=auth(drv["token"]))
         assert r2.status_code == 200
 
+        # Create a pending bid while the driver is approved. It must become
+        # ineligible for acceptance once the account is suspended.
+        shipment = create_published_shipment(customer, "TEST_suspended_driver_bid")
+        bid_response = requests.post(
+            f"{API}/shipments/{shipment['id']}/bids", json={"price": 100, "note": ""}, headers=auth(drv["token"])
+        )
+        assert bid_response.status_code == 200, bid_response.text
+
         # audit log written
         r3 = requests.get(f"{API}/admin/audit-logs", headers=auth(admin_token))
         assert any(a.get("entity_id") == did and a.get("action") == "driver_approve" for a in r3.json())
@@ -282,10 +302,11 @@ class TestAdmin:
         assert r.status_code == 200
         assert r.json()["verification_status"] == "SUSPENDED"
 
-        # marketplace now blocked
-        drv2 = otp_login(PENDING_DRIVER_PHONE, "driver")
-        r4 = requests.get(f"{API}/marketplace/shipments", headers=auth(drv2["token"]))
+        # A JWT issued before suspension is rejected after the DB status changes.
+        r4 = requests.get(f"{API}/auth/me", headers=auth(drv["token"]))
         assert r4.status_code == 403
+        r5 = requests.post(f"{API}/bids/{bid_response.json()['id']}/accept", headers=auth(customer["token"]))
+        assert r5.status_code == 400
 
         # restore to PENDING for repeatability
         requests.post(f"{API}/admin/drivers/{did}/verify",
@@ -306,3 +327,86 @@ class TestAuthorization:
     def test_unauth_shipments_mine_401(self):
         r = requests.get(f"{API}/shipments/mine")
         assert r.status_code in (401, 403)
+
+
+# ---------- security and lifecycle regressions ----------
+class TestSecurityLifecycleRegressions:
+    def test_cross_user_shipment_access_and_open_cancellation(self, customer, approved_driver, pending_driver, admin_token):
+        shipment = create_published_shipment(customer, "TEST_object_authorization")
+        other_customer = otp_login("+96891112223", "customer")
+        provider = otp_login(PROVIDER_PHONE, "provider")
+
+        r = requests.get(f"{API}/shipments/{shipment['id']}", headers=auth(other_customer["token"]))
+        assert r.status_code in (403, 404)
+        r = requests.get(f"{API}/shipments/{shipment['id']}", headers=auth(pending_driver["token"]))
+        assert r.status_code in (403, 404)
+        r = requests.get(f"{API}/shipments/{shipment['id']}", headers=auth(provider["token"]))
+        assert r.status_code in (403, 404)
+        r = requests.get(f"{API}/shipments/{shipment['id']}", headers=auth(admin_token))
+        assert r.status_code == 200
+
+        bid = requests.post(f"{API}/shipments/{shipment['id']}/bids", json={"price": 100}, headers=auth(approved_driver["token"]))
+        assert bid.status_code == 200
+        r = requests.delete(f"{API}/shipments/{shipment['id']}", headers=auth(customer["token"]))
+        assert r.status_code == 200
+        bids = requests.get(f"{API}/shipments/{shipment['id']}/bids", headers=auth(customer["token"]))
+        assert bids.status_code == 200
+        assert bids.json()[0]["status"] == "CANCELLED"
+
+    def test_trip_state_delivery_review_and_duplicate_guards(self, customer, approved_driver, pending_driver):
+        shipment = create_published_shipment(customer, "TEST_trip_lifecycle")
+        bid = requests.post(f"{API}/shipments/{shipment['id']}/bids", json={"price": 175}, headers=auth(approved_driver["token"]))
+        assert bid.status_code == 200, bid.text
+        accepted = requests.post(f"{API}/bids/{bid.json()['id']}/accept", headers=auth(customer["token"]))
+        assert accepted.status_code == 200, accepted.text
+        trip_id = accepted.json()["id"]
+
+        other_customer = otp_login("+96891112224", "customer")
+        denied = requests.get(f"{API}/trips/{trip_id}", headers=auth(other_customer["token"]))
+        assert denied.status_code in (403, 404)
+        denied = requests.get(f"{API}/trips/{trip_id}", headers=auth(pending_driver["token"]))
+        assert denied.status_code in (403, 404)
+
+        early_confirm = requests.post(f"{API}/trips/{trip_id}/confirm-delivery", json={}, headers=auth(customer["token"]))
+        early_review = requests.post(f"{API}/trips/{trip_id}/review", json={"overall": 5, "service_quality": 5, "communication": 5, "on_time": 5}, headers=auth(customer["token"]))
+        assert early_confirm.status_code == 400
+        assert early_review.status_code == 400
+        assert requests.delete(f"{API}/shipments/{shipment['id']}", headers=auth(customer["token"])).status_code == 400
+
+        skipped = requests.post(f"{API}/trips/{trip_id}/status", json={"status": "LOADING"}, headers=auth(approved_driver["token"]))
+        assert skipped.status_code == 400
+        valid = requests.post(f"{API}/trips/{trip_id}/status", json={"status": "DRIVER_EN_ROUTE"}, headers=auth(approved_driver["token"]))
+        assert valid.status_code == 200
+        backwards = requests.post(f"{API}/trips/{trip_id}/status", json={"status": "DRIVER_ASSIGNED"}, headers=auth(approved_driver["token"]))
+        assert backwards.status_code == 400
+        for status in ["DRIVER_ARRIVED", "LOADING", "LOADED", "IN_TRANSIT", "NEAR_DESTINATION", "DRIVER_ARRIVED_DESTINATION", "DELIVERED_PENDING_CONFIRMATION"]:
+            r = requests.post(f"{API}/trips/{trip_id}/status", json={"status": status}, headers=auth(approved_driver["token"]))
+            assert r.status_code == 200, r.text
+        terminal_update = requests.post(f"{API}/trips/{trip_id}/status", json={"status": "DELIVERED_PENDING_CONFIRMATION"}, headers=auth(approved_driver["token"]))
+        assert terminal_update.status_code == 400
+
+        confirmed = requests.post(f"{API}/trips/{trip_id}/confirm-delivery", json={}, headers=auth(customer["token"]))
+        assert confirmed.status_code == 200
+        for invalid_score in (0, -1, 6):
+            invalid_rating = requests.post(f"{API}/trips/{trip_id}/review", json={"overall": invalid_score, "service_quality": 5, "communication": 5, "on_time": 5}, headers=auth(customer["token"]))
+            assert invalid_rating.status_code == 422
+        invalid_dimension = requests.post(f"{API}/trips/{trip_id}/review", json={"overall": 5, "service_quality": 5, "communication": 5, "on_time": 6}, headers=auth(customer["token"]))
+        assert invalid_dimension.status_code == 422
+        first_review = requests.post(f"{API}/trips/{trip_id}/review", json={"overall": 5, "service_quality": 5, "communication": 5, "on_time": 5}, headers=auth(customer["token"]))
+        assert first_review.status_code == 200, first_review.text
+        duplicate_review = requests.post(f"{API}/trips/{trip_id}/review", json={"overall": 5, "service_quality": 5, "communication": 5, "on_time": 5}, headers=auth(customer["token"]))
+        assert duplicate_review.status_code == 409
+
+    def test_bid_acceptance_lifecycle_is_single_trip(self, customer, approved_driver, admin_token):
+        shipment = create_published_shipment(customer, "TEST_bid_acceptance_lifecycle")
+        other_driver = otp_login("+96890000003", "driver")
+        first = requests.post(f"{API}/shipments/{shipment['id']}/bids", json={"price": 150}, headers=auth(approved_driver["token"]))
+        second = requests.post(f"{API}/shipments/{shipment['id']}/bids", json={"price": 160}, headers=auth(other_driver["token"]))
+        assert first.status_code == 200 and second.status_code == 200
+        accepted = requests.post(f"{API}/bids/{first.json()['id']}/accept", headers=auth(customer["token"]))
+        assert accepted.status_code == 200
+        assert requests.post(f"{API}/bids/{first.json()['id']}/accept", headers=auth(customer["token"])).status_code == 400
+        assert requests.post(f"{API}/bids/{second.json()['id']}/accept", headers=auth(customer["token"])).status_code == 400
+        trips = requests.get(f"{API}/admin/trips", headers=auth(admin_token))
+        assert trips.status_code == 200
+        assert sum(t["shipment_id"] == shipment["id"] for t in trips.json()) == 1

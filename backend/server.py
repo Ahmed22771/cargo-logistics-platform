@@ -11,6 +11,7 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response
+from pymongo import ReturnDocument
 from starlette.middleware.cors import CORSMiddleware
 
 from database import db, ensure_indexes
@@ -52,6 +53,7 @@ async def create_notification(user_id, type_, title_ar, title_en, body_ar="", bo
 async def audit(admin, action, entity, entity_id, result="success"):
     await db.audit_logs.insert_one({
         "id": uid(), "admin_id": admin["id"], "admin_name": admin.get("name", ""),
+        "actor_id": admin["id"], "actor_name": admin.get("name", ""), "actor_role": admin.get("role", ""),
         "action": action, "entity": entity, "entity_id": entity_id,
         "result": result, "timestamp": now_iso(),
     })
@@ -62,6 +64,35 @@ def clean(doc):
         doc.pop("_id", None)
         doc.pop("password_hash", None)
     return doc
+
+
+async def can_access_shipment(shipment: dict, user: dict) -> bool:
+    """Apply resource-level access rules independently of frontend routing."""
+    if user["role"] == "admin":
+        return True
+    if user["role"] == "customer":
+        return shipment["customer_id"] == user["id"]
+    if user["role"] == "driver":
+        if shipment.get("assigned_driver_id") == user["id"]:
+            return True
+        # A driver who has submitted a bid is legitimately participating, but no
+        # other driver may fetch an arbitrary customer's shipment by id.
+        return bool(await db.bids.find_one({"shipment_id": shipment["id"], "driver_id": user["id"]}))
+    if user["role"] == "provider":
+        return bool(await db.trips.find_one({"shipment_id": shipment["id"], "provider_id": user["id"]}))
+    return False
+
+
+def can_access_trip(trip: dict, user: dict) -> bool:
+    if user["role"] == "admin":
+        return True
+    if user["role"] == "customer":
+        return trip["customer_id"] == user["id"]
+    if user["role"] == "driver":
+        return trip["driver_id"] == user["id"]
+    if user["role"] == "provider":
+        return trip.get("provider_id") == user["id"]
+    return False
 
 
 # ================= AUTH =================
@@ -191,7 +222,7 @@ async def my_shipments(user: dict = Depends(require_roles("customer"))):
 @api.get("/shipments/{sid}")
 async def get_shipment(sid: str, user: dict = Depends(get_current_user)):
     s = await db.shipments.find_one({"id": sid}, {"_id": 0})
-    if not s:
+    if not s or not await can_access_shipment(s, user):
         raise HTTPException(status_code=404, detail="Shipment not found")
     return s
 
@@ -242,7 +273,19 @@ async def cancel_shipment(sid: str, user: dict = Depends(require_roles("customer
     s = await db.shipments.find_one({"id": sid})
     if not s or s["customer_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Shipment not found")
-    await db.shipments.update_one({"id": sid}, {"$set": {"status": "CANCELLED", "updated_at": now_iso()}})
+    if s["status"] not in ("DRAFT", "PUBLISHED", "BIDDING"):
+        raise HTTPException(status_code=400, detail="Cannot cancel shipment in current state")
+    result = await db.shipments.update_one(
+        {"id": sid, "customer_id": user["id"], "status": {"$in": ["DRAFT", "PUBLISHED", "BIDDING"]}},
+        {"$set": {"status": "CANCELLED", "updated_at": now_iso()}},
+    )
+    if result.modified_count != 1:
+        raise HTTPException(status_code=400, detail="Cannot cancel shipment in current state")
+    await db.bids.update_many(
+        {"shipment_id": sid, "status": "PENDING"},
+        {"$set": {"status": "CANCELLED", "updated_at": now_iso()}},
+    )
+    await audit(user, "shipment_cancelled", "shipment", sid)
     return {"success": True}
 
 
@@ -317,22 +360,41 @@ async def accept_bid(bid_id: str, user: dict = Depends(require_roles("customer")
     bid = await db.bids.find_one({"id": bid_id})
     if not bid:
         raise HTTPException(status_code=404, detail="Bid not found")
-    s = await db.shipments.find_one({"id": bid["shipment_id"]})
-    if not s or s["customer_id"] != user["id"]:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    if s.get("accepted_bid_id"):
-        raise HTTPException(status_code=400, detail="A bid was already accepted")
-
+    if bid.get("status") != "PENDING":
+        raise HTTPException(status_code=400, detail="Bid is not pending")
     driver = await db.users.find_one({"id": bid["driver_id"]}, {"_id": 0, "password_hash": 0})
+    if not driver or driver.get("verification_status") != "APPROVED" or (driver.get("status") or "active").lower() in ("inactive", "suspended"):
+        raise HTTPException(status_code=400, detail="Driver is not eligible")
+
+    trip_id = uid()
+    # This conditional update is the acceptance lock: only one request can reserve
+    # an open shipment, so competing bids cannot create more than one active trip.
+    s = await db.shipments.find_one_and_update(
+        {"id": bid["shipment_id"], "customer_id": user["id"], "status": {"$in": ["PUBLISHED", "BIDDING"]}, "accepted_bid_id": None},
+        {"$set": {"status": "DRIVER_ASSIGNED", "accepted_bid_id": bid_id, "assigned_driver_id": bid["driver_id"], "trip_id": trip_id, "updated_at": now_iso()}},
+        return_document=ReturnDocument.BEFORE,
+    )
+    if not s:
+        raise HTTPException(status_code=400, detail="Shipment is not available for bid acceptance")
+
+    claimed_bid = await db.bids.update_one(
+        {"id": bid_id, "status": "PENDING"},
+        {"$set": {"status": "ACCEPTED", "updated_at": now_iso()}},
+    )
+    if claimed_bid.modified_count != 1:
+        await db.shipments.update_one(
+            {"id": s["id"], "accepted_bid_id": bid_id, "trip_id": trip_id},
+            {"$set": {"status": s["status"], "accepted_bid_id": s.get("accepted_bid_id"), "assigned_driver_id": s.get("assigned_driver_id"), "trip_id": s.get("trip_id"), "updated_at": now_iso()}},
+        )
+        raise HTTPException(status_code=400, detail="Bid is not pending")
     # accept this bid, reject others
-    await db.bids.update_one({"id": bid_id}, {"$set": {"status": "ACCEPTED", "updated_at": now_iso()}})
     await db.bids.update_many(
         {"shipment_id": s["id"], "id": {"$ne": bid_id}, "status": "PENDING"},
         {"$set": {"status": "REJECTED", "updated_at": now_iso()}},
     )
     # create trip
     trip = {
-        "id": uid(), "shipment_id": s["id"], "customer_id": s["customer_id"], "customer_name": s["customer_name"],
+        "id": trip_id, "shipment_id": s["id"], "customer_id": s["customer_id"], "customer_name": s["customer_name"],
         "driver_id": bid["driver_id"], "driver_name": bid["driver_name"], "provider_id": bid.get("provider_id"),
         "vehicle": bid.get("driver_vehicle", {}),
         "pickup_location": s.get("pickup_location"), "delivery_location": s.get("delivery_location"),
@@ -344,10 +406,6 @@ async def accept_bid(bid_id: str, user: dict = Depends(require_roles("customer")
         "created_at": now_iso(), "updated_at": now_iso(),
     }
     await db.trips.insert_one(trip)
-    await db.shipments.update_one({"id": s["id"]}, {"$set": {
-        "status": "DRIVER_ASSIGNED", "accepted_bid_id": bid_id,
-        "assigned_driver_id": bid["driver_id"], "trip_id": trip["id"], "updated_at": now_iso(),
-    }})
     await create_notification(bid["driver_id"], "bid_accepted", "تم قبول عرضك!", "Your bid was accepted!",
                               f"تم قبول عرضك على «{s['title']}»", f"Your bid on \"{s['title']}\" was accepted",
                               {"trip_id": trip["id"], "shipment_id": s["id"], "entity_type": "trip", "entity_id": trip["id"]})
@@ -378,7 +436,7 @@ async def my_trips(user: dict = Depends(get_current_user)):
 @api.get("/trips/{tid}")
 async def get_trip(tid: str, user: dict = Depends(get_current_user)):
     t = await db.trips.find_one({"id": tid}, {"_id": 0})
-    if not t:
+    if not t or not can_access_trip(t, user):
         raise HTTPException(status_code=404, detail="Trip not found")
     return t
 
@@ -390,6 +448,13 @@ async def update_trip_status(tid: str, body: TripStatusUpdate, user: dict = Depe
         raise HTTPException(status_code=404, detail="Trip not found")
     if body.status not in TRIP_FLOW:
         raise HTTPException(status_code=400, detail="Invalid status")
+    try:
+        current_index = TRIP_FLOW.index(t["status"])
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Trip is in a terminal state")
+    has_next_state = current_index + 1 < len(TRIP_FLOW)
+    if not has_next_state or body.status != TRIP_FLOW[current_index + 1]:
+        raise HTTPException(status_code=400, detail="INVALID_TRIP_TRANSITION")
     event = {"id": uid(), "status": body.status, "lat": body.lat, "lng": body.lng, "timestamp": now_iso()}
     await db.trips.update_one({"id": tid}, {
         "$set": {"status": body.status, "updated_at": now_iso()},
@@ -407,6 +472,8 @@ async def confirm_delivery(tid: str, body: DeliveryConfirm, user: dict = Depends
     t = await db.trips.find_one({"id": tid})
     if not t or t["customer_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Trip not found")
+    if t.get("status") != "DELIVERED_PENDING_CONFIRMATION":
+        raise HTTPException(status_code=400, detail="Trip is not ready for delivery confirmation")
     await db.trips.update_one({"id": tid}, {"$set": {
         "status": "DELIVERED", "customer_confirmed": True,
         "delivery_confirmation": {"reference": body.reference or "", "confirmed_at": now_iso()},
@@ -423,7 +490,9 @@ async def review_trip(tid: str, body: ReviewCreate, user: dict = Depends(require
     t = await db.trips.find_one({"id": tid})
     if not t or t["customer_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Trip not found")
-    if not t.get("customer_confirmed"):
+    if t.get("review_id"):
+        raise HTTPException(status_code=409, detail="Trip already reviewed")
+    if t.get("status") != "DELIVERED" or not t.get("customer_confirmed"):
         raise HTTPException(status_code=400, detail="Delivery not confirmed yet")
     review = {
         "id": uid(), "trip_id": tid, "shipment_id": t["shipment_id"], "customer_id": user["id"],
@@ -431,6 +500,12 @@ async def review_trip(tid: str, body: ReviewCreate, user: dict = Depends(require
         "communication": body.communication, "on_time": body.on_time, "comment": body.comment or "",
         "created_at": now_iso(),
     }
+    claimed = await db.trips.update_one(
+        {"id": tid, "customer_id": user["id"], "status": "DELIVERED", "customer_confirmed": True, "review_id": {"$exists": False}},
+        {"$set": {"status": "COMPLETED", "review_id": review["id"], "updated_at": now_iso()}},
+    )
+    if claimed.modified_count != 1:
+        raise HTTPException(status_code=409, detail="Trip already reviewed or not ready for review")
     await db.reviews.insert_one(review)
     # update driver aggregate rating
     driver = await db.users.find_one({"id": t["driver_id"]})
@@ -443,7 +518,6 @@ async def review_trip(tid: str, body: ReviewCreate, user: dict = Depends(require
             "rating": new_avg, "rating_count": new_count,
             "completed_trips": driver.get("completed_trips", 0) + 1,
         }})
-    await db.trips.update_one({"id": tid}, {"$set": {"status": "COMPLETED", "review_id": review["id"], "updated_at": now_iso()}})
     await db.shipments.update_one({"id": t["shipment_id"]}, {"$set": {"status": "COMPLETED", "updated_at": now_iso()}})
     from extra import record_trip_completion
     completed = await db.trips.find_one({"id": tid}, {"_id": 0})

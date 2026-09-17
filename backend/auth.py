@@ -50,7 +50,7 @@ async def get_current_user(request: Request) -> dict:
         user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-        if (user.get("status") or "active").lower() in ("inactive", "suspended") or user.get("verification_status") == "SUSPENDED":
+        if (user.get("status") or "active").lower() in ("inactive", "disabled", "suspended") or user.get("verification_status") == "SUSPENDED":
             raise HTTPException(status_code=403, detail="Account suspended or inactive")
         return user
     except jwt.ExpiredSignatureError:

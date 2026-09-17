@@ -12,7 +12,7 @@ export default function AdminAccess() {
   const [roles, setRoles] = useState([]);
   const [permCatalog, setPermCatalog] = useState([]);
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ name: "", email: "", password: "", admin_role_key: "operations_manager" });
+  const [form, setForm] = useState({ name: "", email: "", password: "", admin_role_key: "manager" });
   const [busy, setBusy] = useState(false);
 
   const load = () => {
@@ -30,7 +30,7 @@ export default function AdminAccess() {
   const createAdmin = async () => {
     if (!form.name || !form.email || !form.password) { toast.error(t("common.required")); return; }
     setBusy(true);
-    try { await api.post("/admin/admins", form); toast.success(t("common.success")); setShowCreate(false); setForm({ name: "", email: "", password: "", admin_role_key: "operations_manager" }); load(); }
+    try { await api.post("/admin/admins", form); toast.success(t("common.success")); setShowCreate(false); setForm({ name: "", email: "", password: "", admin_role_key: "manager" }); load(); }
     catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
   };
   const assign = async (id, key) => {

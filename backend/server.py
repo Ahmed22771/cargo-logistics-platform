@@ -138,6 +138,11 @@ async def otp_verify(body: OtpVerify, response: Response):
                         "company_role": "COMPANY_ADMIN", "verification_status": "DRAFT"})
         await db.users.insert_one(new)
         user = new
+    else:
+        if (user.get("status") or "active").lower() in ("disabled", "inactive", "suspended"):
+            raise HTTPException(status_code=403, detail="ACCOUNT_DISABLED")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now_iso()}})
+    user["last_login"] = now_iso()
     token = create_access_token(user["id"], user["role"])
     return {"token": token, "user": clean(dict(user))}
 
@@ -147,6 +152,9 @@ async def admin_login(body: AdminLogin):
     user = await db.users.find_one({"email": body.email.lower(), "role": "admin"})
     if not user or not verify_password(body.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    if (user.get("status") or "active").lower() in ("disabled", "inactive", "suspended"):
+        raise HTTPException(status_code=403, detail="ACCOUNT_DISABLED")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now_iso()}})
     token = create_access_token(user["id"], "admin")
     return {"token": token, "user": clean(dict(user))}
 
@@ -624,8 +632,22 @@ async def admin_customers(user: dict = Depends(require_roles("admin"))):
 
 
 @api.get("/admin/users")
-async def admin_users(user: dict = Depends(require_roles("admin"))):
-    return await db.users.find({}, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(1000)
+async def admin_users(q: str = "", role: str = "", status: str = "", user: dict = Depends(require_roles("admin"))):
+    query = {}
+    if role:
+        query["role"] = role
+    docs = await db.users.find(query, {"_id": 0, "password_hash": 0}).sort("created_at", -1).to_list(2000)
+    ql = (q or "").lower().strip()
+    out = []
+    for u in docs:
+        st = "disabled" if (u.get("status") or "active").lower() in ("disabled", "inactive", "suspended") else "active"
+        u["status"] = st
+        if status and status != st:
+            continue
+        if ql and ql not in (u.get("name", "") or "").lower() and ql not in (u.get("phone", "") or "").lower() and ql not in (u.get("email", "") or "").lower():
+            continue
+        out.append(u)
+    return out
 
 
 @api.get("/admin/shipments")

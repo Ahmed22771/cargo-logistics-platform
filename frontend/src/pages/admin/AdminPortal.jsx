@@ -1,8 +1,9 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { LayoutDashboard, ShieldCheck, Package, Gavel, Truck, Users, ScrollText } from "lucide-react";
+import { LayoutDashboard, ShieldCheck, Package, Gavel, Truck, Users, ScrollText, Wallet, KeyRound } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { LoadingScreen } from "../../components/ProtectedRoute";
+import api from "../../lib/api";
 import AdminLogin from "./AdminLogin";
 import { AdminLayout } from "./AdminLayout";
 import AdminDashboard from "./AdminDashboard";
@@ -12,24 +13,40 @@ import AdminBids from "./AdminBids";
 import AdminTrips from "./AdminTrips";
 import AdminUsers from "./AdminUsers";
 import AdminAudit from "./AdminAudit";
+import AdminFinance from "./AdminFinance";
+import AdminAccess from "./AdminAccess";
 
+// perm: null = visible to any admin; otherwise requires that permission
 const NAV = [
-  { key: "dashboard", to: "", label: "admin.dashboard", icon: LayoutDashboard },
-  { key: "drivers", to: "/drivers", label: "nav.drivers", icon: ShieldCheck },
-  { key: "shipments", to: "/shipments", label: "nav.shipments", icon: Package },
-  { key: "bids", to: "/bids", label: "nav.bids", icon: Gavel },
-  { key: "trips", to: "/trips", label: "nav.trips", icon: Truck },
-  { key: "users", to: "/users", label: "nav.users", icon: Users },
-  { key: "audit", to: "/audit", label: "nav.auditLog", icon: ScrollText },
+  { key: "dashboard", to: "", label: "admin.dashboard", icon: LayoutDashboard, perm: null },
+  { key: "drivers", to: "/drivers", label: "nav.drivers", icon: ShieldCheck, perm: null },
+  { key: "shipments", to: "/shipments", label: "nav.shipments", icon: Package, perm: null },
+  { key: "bids", to: "/bids", label: "nav.bids", icon: Gavel, perm: null },
+  { key: "trips", to: "/trips", label: "nav.trips", icon: Truck, perm: null },
+  { key: "users", to: "/users", label: "nav.users", icon: Users, perm: "users.view" },
+  { key: "finance", to: "/finance", label: "nav.finance", icon: Wallet, perm: "finance.view" },
+  { key: "access", to: "/access", label: "nav.access", icon: KeyRound, perm: "system.roles" },
+  { key: "audit", to: "/audit", label: "nav.auditLog", icon: ScrollText, perm: "system.audit" },
 ];
 
 export default function AdminPortal() {
   const { user, loading } = useAuth();
+  const [perms, setPerms] = useState(null);
+
+  useEffect(() => {
+    if (user && user.role === "admin") {
+      api.get("/admin/me/permissions").then(({ data }) => setPerms(data.permissions || [])).catch(() => setPerms([]));
+    }
+  }, [user]);
+
   if (loading) return <LoadingScreen />;
   // Separate admin auth experience: only ADMIN role can enter, everyone else sees admin login
   if (!user || user.role !== "admin") return <AdminLogin />;
+
+  const nav = NAV.filter((n) => !n.perm || (perms || []).includes(n.perm));
+
   return (
-    <AdminLayout navItems={NAV}>
+    <AdminLayout navItems={nav}>
       <Routes>
         <Route index element={<AdminDashboard />} />
         <Route path="drivers" element={<AdminDrivers />} />
@@ -37,6 +54,8 @@ export default function AdminPortal() {
         <Route path="bids" element={<AdminBids />} />
         <Route path="trips" element={<AdminTrips />} />
         <Route path="users" element={<AdminUsers />} />
+        <Route path="finance" element={<AdminFinance />} />
+        <Route path="access" element={<AdminAccess />} />
         <Route path="audit" element={<AdminAudit />} />
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

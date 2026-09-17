@@ -172,23 +172,32 @@ async def seed_phase11():
              "required": req, "has_expiry": exp, "active": True, "created_at": now_iso()}
             for (k, ar, en, ot, req, exp) in types
         ])
-    # RBAC roles
-    if await db.roles.count_documents({}) == 0:
-        from extra import PERMISSIONS
-        roles = [
-            ("super_admin", "مدير عام", "Super Admin", list(PERMISSIONS)),
-            ("operations_manager", "مدير العمليات", "Operations Manager",
-             ["users.view", "shipments.view", "shipments.edit", "shipments.cancel", "shipments.assign", "documents.view", "reports.view"]),
-            ("document_reviewer", "مدقق المستندات", "Document Reviewer",
-             ["documents.view", "documents.review", "documents.approve", "documents.reject"]),
-            ("finance_manager", "مدير مالي", "Finance Manager",
-             ["finance.view", "finance.transactions", "finance.commission", "finance.payouts", "finance.adjust", "finance.refund", "reports.view", "reports.export"]),
-            ("support", "دعم العملاء", "Customer Support", ["users.view", "shipments.view"]),
-        ]
-        await db.roles.insert_many([
-            {"id": uid(), "key": k, "name_ar": ar, "name_en": en, "permissions": p, "created_at": now_iso()}
-            for (k, ar, en, p) in roles
-        ])
+    # RBAC roles — idempotent upsert of the canonical CARGO staff roles
+    from extra import PERMISSIONS
+    canonical_roles = [
+        ("super_admin", "مدير عام", "Super Admin", list(PERMISSIONS)),
+        ("manager", "مدير", "Manager",
+         ["users.view", "users.create", "users.edit", "users.suspend",
+          "shipments.view", "shipments.edit", "shipments.cancel", "shipments.assign",
+          "documents.view", "finance.view", "finance.transactions",
+          "reports.view", "reports.export", "system.audit"]),
+        ("supervisor", "مشرف", "Supervisor",
+         ["users.view", "shipments.view", "shipments.edit", "documents.view", "reports.view"]),
+        ("document_reviewer", "مدقق المستندات", "Document Reviewer",
+         ["documents.view", "documents.review", "documents.approve", "documents.reject"]),
+        ("finance_accountant", "محاسب مالي", "Finance Accountant",
+         ["finance.view", "finance.transactions", "finance.commission", "finance.payouts",
+          "finance.adjust", "finance.refund", "reports.view", "reports.export"]),
+        ("ministry_supervisor", "مشرف حكومي", "Ministry Supervisor",
+         ["reports.view", "shipments.view", "documents.view", "finance.view"]),
+    ]
+    for (k, ar, en, p) in canonical_roles:
+        await db.roles.update_one(
+            {"key": k},
+            {"$set": {"name_ar": ar, "name_en": en, "permissions": p},
+             "$setOnInsert": {"id": uid(), "key": k, "created_at": now_iso()}},
+            upsert=True,
+        )
     # Platform settings
     if not await db.settings.find_one({"id": "platform"}):
         await db.settings.insert_one({"id": "platform", "commission_type": "percentage", "commission_value": 10, "currency": "OMR"})

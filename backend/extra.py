@@ -25,7 +25,7 @@ PERMISSIONS = [
     "users.view", "users.create", "users.edit", "users.suspend", "users.delete",
     "shipments.view", "shipments.edit", "shipments.cancel", "shipments.assign", "shipments.override",
     "documents.view", "documents.review", "documents.approve", "documents.reject",
-    "finance.view", "finance.transactions", "finance.commission", "finance.payouts", "finance.adjust", "finance.refund",
+    "finance.view", "finance.transactions", "finance.commission", "finance.payouts", "finance.adjust", "finance.refund", "finance.reverse",
     "reports.view", "reports.export",
     "system.settings", "system.roles", "system.permissions", "system.audit",
 ]
@@ -317,6 +317,75 @@ async def my_permissions(user: dict = Depends(require_roles("admin"))):
     return {"role_key": user.get("admin_role_key", "super_admin"), "permissions": await get_user_permissions(user)}
 
 
+# ================= USER MANAGEMENT =================
+class UserUpdateBody(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    notes: Optional[str] = None
+    admin_role_key: Optional[str] = None
+
+
+class StatusBody(BaseModel):
+    status: str  # active | disabled
+
+
+class ResetPwBody(BaseModel):
+    password: str
+
+
+def _is_disabled(u: dict) -> bool:
+    return (u.get("status") or "active").lower() in ("disabled", "inactive", "suspended")
+
+
+@extra_api.put("/admin/users/{target_id}")
+async def admin_update_user(target_id: str, body: UserUpdateBody, user: dict = Depends(require_permission("users.edit"))):
+    target = await db.users.find_one({"id": target_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    updates = {}
+    for f in ("name", "email", "phone", "notes"):
+        v = getattr(body, f)
+        if v is not None:
+            updates[f] = v.lower().strip() if f == "email" else v
+    if body.admin_role_key is not None and target.get("role") == "admin":
+        updates["admin_role_key"] = body.admin_role_key
+    if not updates:
+        raise HTTPException(status_code=400, detail="No changes provided")
+    await db.users.update_one({"id": target_id}, {"$set": {**updates, "updated_at": now_iso()}})
+    await audit(user, "user_updated", "user", target_id,
+                old={k: target.get(k) for k in updates}, new=updates)
+    return await db.users.find_one({"id": target_id}, {"_id": 0, "password_hash": 0})
+
+
+@extra_api.post("/admin/users/{target_id}/status")
+async def admin_set_status(target_id: str, body: StatusBody, user: dict = Depends(require_permission("users.suspend"))):
+    if target_id == user["id"]:
+        raise HTTPException(status_code=400, detail="CANNOT_DISABLE_SELF")
+    target = await db.users.find_one({"id": target_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    new_status = "disabled" if body.status.lower() in ("disabled", "inactive", "suspended") else "active"
+    await db.users.update_one({"id": target_id}, {"$set": {"status": new_status, "updated_at": now_iso()}})
+    await audit(user, "user_disabled" if new_status == "disabled" else "user_enabled",
+                "user", target_id, old=target.get("status", "active"), new=new_status)
+    return {"id": target_id, "status": new_status}
+
+
+@extra_api.post("/admin/users/{target_id}/reset-password")
+async def admin_reset_password(target_id: str, body: ResetPwBody, user: dict = Depends(require_permission("users.edit"))):
+    target = await db.users.find_one({"id": target_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.get("role") != "admin":
+        raise HTTPException(status_code=400, detail="PASSWORD_ONLY_FOR_ADMIN")
+    if len(body.password or "") < 6:
+        raise HTTPException(status_code=400, detail="PASSWORD_TOO_SHORT")
+    await db.users.update_one({"id": target_id}, {"$set": {"password_hash": hash_password(body.password), "updated_at": now_iso()}})
+    await audit(user, "password_reset", "user", target_id)
+    return {"success": True}
+
+
 # ================= FINANCE =================
 class SettingsBody(BaseModel):
     commission_type: str = "percentage"  # percentage | fixed
@@ -330,6 +399,20 @@ class AdjustBody(BaseModel):
     amount: float
     reason: str
     description: Optional[str] = ""
+
+
+class RefundBody(BaseModel):
+    account_id: str
+    account_role: str = "customer"
+    amount: float
+    reason: str
+    shipment_id: Optional[str] = None
+    trip_id: Optional[str] = None
+    description: Optional[str] = ""
+
+
+class ReverseBody(BaseModel):
+    reason: str
 
 
 async def get_settings():
@@ -393,7 +476,7 @@ async def finance_stats(user: dict = Depends(require_permission("finance.view"))
         "driver_earnings": total("driver_earning"),
         "provider_earnings": total("provider_earning"),
         "refunds": total("refund"),
-        "adjustments": total("adjustment"),
+        "adjustments": round(total("adjustment") + total("reversal"), 3),
         "payouts": total("payout"),
         "transaction_count": len(txns),
     }
@@ -401,7 +484,9 @@ async def finance_stats(user: dict = Depends(require_permission("finance.view"))
 
 @extra_api.get("/admin/finance/transactions")
 async def list_transactions(type: Optional[str] = None, status: Optional[str] = None,
-                            account_role: Optional[str] = None, q: Optional[str] = None,
+                            account_role: Optional[str] = None, account_id: Optional[str] = None,
+                            date_from: Optional[str] = None, date_to: Optional[str] = None,
+                            q: Optional[str] = None,
                             user: dict = Depends(require_permission("finance.transactions"))):
     query = {}
     if type:
@@ -410,6 +495,15 @@ async def list_transactions(type: Optional[str] = None, status: Optional[str] = 
         query["status"] = status
     if account_role:
         query["account_role"] = account_role
+    if account_id:
+        query["account_id"] = account_id
+    if date_from or date_to:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            rng["$lte"] = date_to + "T23:59:59"
+        query["created_at"] = rng
     txns = await db.transactions.find(query, {"_id": 0}).sort("created_at", -1).to_list(2000)
     # attach account names
     ids = list({t["account_id"] for t in txns if t.get("account_id")})
@@ -430,7 +524,7 @@ async def balances(role: str = "driver", user: dict = Depends(require_permission
         {"$group": {"_id": "$account_id",
                     "earned": {"$sum": {"$cond": [{"$eq": ["$type", earn_type]}, "$amount", 0]}},
                     "payouts": {"$sum": {"$cond": [{"$eq": ["$type", "payout"]}, "$amount", 0]}},
-                    "adjustments": {"$sum": {"$cond": [{"$eq": ["$type", "adjustment"]}, "$amount", 0]}},
+                    "adjustments": {"$sum": {"$cond": [{"$in": ["$type", ["adjustment", "reversal"]]}, "$amount", 0]}},
                     "refunds": {"$sum": {"$cond": [{"$eq": ["$type", "refund"]}, "$amount", 0]}}}},
     ]
     rows = await db.transactions.aggregate(pipeline).to_list(1000)
@@ -458,6 +552,76 @@ async def create_adjustment(body: AdjustBody, user: dict = Depends(require_permi
     await audit(user, "financial_adjustment", "transaction", txn["id"], new=body.amount, reason=body.reason)
     txn.pop("_id", None)
     return txn
+
+
+@extra_api.post("/admin/finance/refund")
+async def create_refund(body: RefundBody, user: dict = Depends(require_permission("finance.refund"))):
+    s = await get_settings()
+    amt = abs(float(body.amount))
+    txn = {"id": uid(), "type": "refund", "account_id": body.account_id, "account_role": body.account_role,
+           "shipment_id": body.shipment_id, "trip_id": body.trip_id, "amount": amt, "gross": amt,
+           "commission": 0, "net": amt, "currency": s["currency"], "status": "COMPLETED",
+           "description": body.description or "Refund", "reason": body.reason,
+           "created_by": user.get("name"), "created_by_id": user["id"], "created_at": now_iso()}
+    await db.transactions.insert_one(txn)
+    await audit(user, "refund_created", "transaction", txn["id"], new=amt, reason=body.reason)
+    txn.pop("_id", None)
+    return txn
+
+
+@extra_api.post("/admin/finance/transactions/{txn_id}/reverse")
+async def reverse_transaction(txn_id: str, body: ReverseBody, user: dict = Depends(require_permission("finance.reverse"))):
+    orig = await db.transactions.find_one({"id": txn_id}, {"_id": 0})
+    if not orig:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if orig.get("reversed"):
+        raise HTTPException(status_code=400, detail="ALREADY_REVERSED")
+    if orig.get("type") == "reversal":
+        raise HTTPException(status_code=400, detail="CANNOT_REVERSE_REVERSAL")
+    rev = {**orig, "id": uid(), "type": "reversal",
+           "amount": -float(orig.get("amount", 0) or 0),
+           "gross": -float(orig.get("gross", 0) or 0),
+           "commission": -float(orig.get("commission", 0) or 0),
+           "net": -float(orig.get("net", 0) or 0),
+           "status": "COMPLETED",
+           "description": f"Reversal of {orig.get('type')} #{txn_id[:8]}",
+           "reason": body.reason, "reverses_txn_id": txn_id,
+           "created_by": user.get("name"), "created_by_id": user["id"], "created_at": now_iso()}
+    rev.pop("_id", None)
+    await db.transactions.insert_one(rev)
+    # mark the original as reversed WITHOUT erasing its trace (amount preserved)
+    await db.transactions.update_one({"id": txn_id}, {"$set": {
+        "reversed": True, "reversed_by": user.get("name"), "reversed_at": now_iso(), "reversal_txn_id": rev["id"]}})
+    await audit(user, "transaction_reversed", "transaction", txn_id, old=orig.get("amount"), new=rev["id"], reason=body.reason)
+    rev.pop("_id", None)
+    return rev
+
+
+@extra_api.get("/admin/finance/account/{account_id}")
+async def finance_account(account_id: str, user: dict = Depends(require_permission("finance.view"))):
+    acc = await db.users.find_one({"id": account_id}, {"_id": 0, "password_hash": 0})
+    txns = await db.transactions.find({"account_id": account_id}, {"_id": 0}).sort("created_at", -1).to_list(2000)
+    s = await get_settings()
+
+    def sm(*types):
+        return round(sum(float(t.get("amount", 0) or 0) for t in txns if t.get("type") in types), 3)
+
+    role = (acc or {}).get("role", "")
+    earned = sm("driver_earning", "provider_earning")
+    paid = sm("customer_payment")
+    payouts = sm("payout")
+    refunds = sm("refund")
+    adjustments = sm("adjustment", "reversal")
+    commission = round(sum(float(t.get("commission", 0) or 0) for t in txns
+                           if t.get("type") in ("driver_earning", "provider_earning")), 3)
+    if role == "customer":
+        balance = round(paid - refunds + adjustments, 3)
+    else:
+        balance = round(earned + adjustments - payouts - refunds, 3)
+    return {"account_id": account_id, "user": acc, "currency": s["currency"],
+            "totals": {"earned": earned, "paid": paid, "payouts": payouts, "refunds": refunds,
+                       "adjustments": adjustments, "commission": commission, "balance": balance},
+            "transactions": txns}
 
 
 # ================= OPS STATS =================

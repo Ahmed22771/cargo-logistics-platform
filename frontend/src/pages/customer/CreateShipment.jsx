@@ -178,7 +178,7 @@ export default function CreateShipment() {
             <div><h2 className="font-bold text-lg text-[#F1701E]">{t("p11.wiz.whereShipment")}</h2><p className="text-xs text-slate-400 mt-0.5">{t("common.from")} / من — {t("p11.wiz.originHint")}</p></div>
             <MapPicker testIdPrefix="pickup-map" value={form.pickup_location} confirmLabel={t("shipment.confirmPickup")}
               onConfirm={(loc) => { set("pickup_location", loc); toast.success(t("shipment.confirmPickup")); }} />
-            {form.pickup_location && <div className="text-sm text-emerald-600 font-semibold flex items-center gap-1.5"><Check className="w-4 h-4" /> {form.pickup_location.address || `${form.pickup_location.lat.toFixed(4)}, ${form.pickup_location.lng.toFixed(4)}`}</div>}
+            {form.pickup_location && <div className="text-sm text-emerald-600 font-semibold flex items-center gap-1.5"><Check className="w-4 h-4" /> {form.pickup_location.address || t("p11.map.unnamed")}</div>}
           </div>
         )}
 
@@ -187,7 +187,7 @@ export default function CreateShipment() {
             <div><h2 className="font-bold text-lg text-[#16233A]">{t("p11.wiz.whereDeliver")}</h2><p className="text-xs text-slate-400 mt-0.5">{t("common.to")} / إلى — {t("p11.wiz.destHint")}</p></div>
             <MapPicker testIdPrefix="delivery-map" value={form.delivery_location} accentConfirm={false} confirmLabel={t("shipment.confirmDelivery")}
               onConfirm={(loc) => { set("delivery_location", loc); toast.success(t("shipment.confirmDelivery")); }} />
-            {form.delivery_location && <div className="text-sm text-emerald-600 font-semibold flex items-center gap-1.5"><Check className="w-4 h-4" /> {form.delivery_location.address || `${form.delivery_location.lat.toFixed(4)}, ${form.delivery_location.lng.toFixed(4)}`}</div>}
+            {form.delivery_location && <div className="text-sm text-emerald-600 font-semibold flex items-center gap-1.5"><Check className="w-4 h-4" /> {form.delivery_location.address || t("p11.map.unnamed")}</div>}
           </div>
         )}
 

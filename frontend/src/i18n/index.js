@@ -128,7 +128,7 @@ export const translations = {
     p11: {
       wiz: {
         whatShipment: "ما هي شحنتك؟", selectCategory: "اختر نوع الشحنة",
-        whereShipment: "أين توجد شحنتك؟", whereDeliver: "إلى أين تريد تسليم شحنتك؟",
+        whereShipment: "أين توجد شحنتك؟", whereDeliver: "إلى أين تريد نقل شحنتك؟",
         originHint: "الموقع الذي توجد فيه الشحنة حالياً وسيتم استلامها منه",
         destHint: "الوجهة التي تريد توصيل الشحنة إليها",
         weightUnit: "وحدة الوزن", packages: "عدد الطرود", fragile: "قابل للكسر",
@@ -139,6 +139,7 @@ export const translations = {
         useCurrent: "استخدام موقعي الحالي", locating: "جارٍ تحديد موقعك...",
         loading: "جارٍ تحميل الخريطة...", error: "تعذّر تحميل الخريطة", retry: "إعادة المحاولة",
         resolving: "جارٍ تحديد العنوان...", coordinates: "الإحداثيات",
+        resolveError: "تعذّر تحديد اسم الموقع", unnamed: "موقع محدد على الخريطة",
       },
       doc: {
         myDocuments: "مستنداتي", driverDocs: "مستندات السائق", vehicleDocs: "مستندات المركبة",
@@ -316,6 +317,7 @@ export const translations = {
         useCurrent: "Use my current location", locating: "Locating...",
         loading: "Loading map...", error: "Could not load map", retry: "Retry",
         resolving: "Resolving address...", coordinates: "Coordinates",
+        resolveError: "Couldn't fetch the location name", unnamed: "Pinned map location",
       },
       doc: {
         myDocuments: "My Documents", driverDocs: "Driver Documents", vehicleDocs: "Vehicle Documents",

@@ -11,37 +11,72 @@ const orangeIcon = L.divIcon({
 });
 
 const OMAN_CENTER = [23.588, 58.3829];
+const NOMINATIM = "https://nominatim.openstreetmap.org";
+// simple in-memory cache of reverse-geocoded results (keyed by rounded coord + lang)
 const addrCache = {};
 
-function composeAddress(a) {
-  if (!a) return null;
+// fetch JSON with a hard timeout and support for an external abort signal
+async function fetchJson(url, { timeout = 10000, signal } = {}) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeout);
+  const onAbort = () => ctrl.abort();
+  if (signal) {
+    if (signal.aborted) ctrl.abort();
+    else signal.addEventListener("abort", onAbort);
+  }
+  try {
+    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: "application/json" } });
+    if (!res.ok) throw new Error("http_" + res.status);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+// Build the best human-readable label from Nominatim address components.
+// Prefers road / neighbourhood / suburb / village / town / city / governorate / country.
+// Falls back to display_name — never raw coordinates.
+function composeAddress(a, displayName) {
+  if (!a) return { formatted: displayName || "", city: "", area: "", country: "" };
+  const road = a.road || a.pedestrian || a.footway || a.residential_road || "";
+  const area = a.neighbourhood || a.suburb || a.quarter || a.residential || a.city_district || a.hamlet || "";
   const city = a.city || a.town || a.village || a.municipality || a.county || a.state_district || "";
-  const area = a.suburb || a.neighbourhood || a.quarter || a.residential || a.hamlet || a.road || "";
+  const governorate = a.state || a.region || a.province || "";
   const country = a.country || "";
-  const parts = [area, city, country].filter(Boolean);
-  return { formatted: parts.join("، ") || "", city, area, country };
+  let parts = [road, area, city, country].filter(Boolean);
+  if (!road && !area && !city) parts = [governorate, country].filter(Boolean);
+  // de-duplicate while preserving order
+  const seen = new Set();
+  const clean = parts.filter((p) => (seen.has(p) ? false : (seen.add(p), true)));
+  return {
+    formatted: clean.join("، ") || displayName || "",
+    city: city || area || governorate || "",
+    area: area || road || "",
+    country,
+  };
 }
 
 const geoProvider = {
-  async reverse(lat, lng, lang = "ar") {
-    const key = `${lat.toFixed(5)},${lng.toFixed(5)}`;
+  async reverse(lat, lng, lang = "ar", signal) {
+    const key = `${lat.toFixed(5)},${lng.toFixed(5)},${lang}`;
     if (addrCache[key]) return addrCache[key];
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=json&addressdetails=1&lat=${lat}&lon=${lng}&accept-language=${lang}`
+    const data = await fetchJson(
+      `${NOMINATIM}/reverse?format=jsonv2&addressdetails=1&zoom=18&lat=${lat}&lon=${lng}&accept-language=${lang}`,
+      { signal, timeout: 10000 }
     );
-    if (!res.ok) throw new Error("reverse_failed");
-    const data = await res.json();
-    const comp = composeAddress(data.address);
-    const out = { address: comp?.formatted || data.display_name || "", city: comp?.city || "", area: comp?.area || "", country: comp?.country || "" };
-    addrCache[key] = out;
+    if (!data || data.error) throw new Error("reverse_empty");
+    const comp = composeAddress(data.address, data.display_name);
+    const out = { address: comp.formatted, city: comp.city, area: comp.area, country: comp.country };
+    if (out.address) addrCache[key] = out;
     return out;
   },
-  async search(q, lang = "ar") {
-    const res = await fetch(
-      `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=om&limit=6&accept-language=${lang}&q=${encodeURIComponent(q)}`
+  async search(q, lang = "ar", signal) {
+    const data = await fetchJson(
+      `${NOMINATIM}/search?format=jsonv2&addressdetails=1&countrycodes=om&limit=6&accept-language=${lang}&q=${encodeURIComponent(q)}`,
+      { signal, timeout: 10000 }
     );
-    if (!res.ok) throw new Error("search_failed");
-    return await res.json();
+    return Array.isArray(data) ? data : [];
   },
 };
 
@@ -59,6 +94,10 @@ export function MapPicker({ value, onConfirm, testIdPrefix = "map", accentConfir
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [resolveError, setResolveError] = useState(false);
+  const reqSeq = useRef(0);
+  const abortRef = useRef(null);
+  const lastCoord = useRef(null);
 
   const setMarker = useCallback(async (lat, lng, known) => {
     if (!mapRef.current) return;
@@ -77,15 +116,52 @@ export function MapPicker({ value, onConfirm, testIdPrefix = "map", accentConfir
   }, [lang]);
 
   const resolve = useCallback(async (lat, lng) => {
-    setSelected((s) => ({ lat, lng, address: "", city: "", area: "", country: "", ...(s || {}), lat, lng }));
+    const myId = ++reqSeq.current;
+    lastCoord.current = { lat, lng };
+    // show the pin immediately, clear any stale label while we resolve
+    setSelected((s) => ({ ...(s || {}), lat, lng, address: "", city: "", area: "", country: "" }));
     setResolving(true);
+    setResolveError(false);
+    if (abortRef.current) abortRef.current.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+
+    const attempt = async (isRetry) => {
+      try {
+        const geo = await geoProvider.reverse(lat, lng, lang, ctrl.signal);
+        if (myId !== reqSeq.current) return; // a newer selection superseded this one
+        setSelected({ lat, lng, ...geo });
+        setResolveError(false);
+      } catch (err) {
+        if (myId !== reqSeq.current) return; // stale / aborted — ignore
+        if (!isRetry) {
+          await new Promise((r) => setTimeout(r, 700));
+          if (myId !== reqSeq.current) return;
+          return attempt(true);
+        }
+        // give up gracefully — keep coords internally, flag the error, no raw-coord label
+        setSelected((s) => ({ ...(s || {}), lat, lng }));
+        setResolveError(true);
+      }
+    };
+
     try {
-      const geo = await geoProvider.reverse(lat, lng, lang);
-      setSelected({ lat, lng, ...geo });
-    } catch {
-      setSelected({ lat, lng, address: "", city: "", area: "", country: "" });
-    } finally { setResolving(false); }
+      await attempt(false);
+    } finally {
+      if (myId === reqSeq.current) setResolving(false);
+    }
   }, [lang]);
+
+  const retryResolve = useCallback(() => {
+    if (lastCoord.current) resolve(lastCoord.current.lat, lastCoord.current.lng);
+  }, [resolve]);
+
+  // ensure a human-readable address is stored — never raw coordinates
+  const finalizeSelected = (s) => {
+    if (s.address && s.address.trim()) return s;
+    const fallback = [s.area, s.city, s.country].filter(Boolean).join("، ");
+    return { ...s, address: fallback };
+  };
 
   const initMap = useCallback(() => {
     if (mapRef.current || !mapEl.current) return;
@@ -112,7 +188,7 @@ export function MapPicker({ value, onConfirm, testIdPrefix = "map", accentConfir
 
   useEffect(() => {
     initMap();
-    return () => { if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; markerRef.current = null; } };
+    return () => { if (abortRef.current) abortRef.current.abort(); if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; markerRef.current = null; } };
     // eslint-disable-next-line
   }, []);
 
@@ -201,15 +277,23 @@ export function MapPicker({ value, onConfirm, testIdPrefix = "map", accentConfir
           <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> {t("p11.map.resolving")}</div>
         ) : selected ? (
           <div data-testid={`${testIdPrefix}-selected-address`} className="text-sm text-slate-800">
-            <span className="font-semibold">{selected.address || `${t("p11.wiz.city")}: —`}</span>
-            {selected.city && <span className="block text-xs text-slate-500 mt-0.5">{[selected.area, selected.city, selected.country].filter(Boolean).join("، ")}</span>}
+            <span className="font-semibold">{selected.address || t("p11.map.unnamed")}</span>
+            {(selected.area || selected.city || selected.country) && (
+              <span className="block text-xs text-slate-500 mt-0.5">{[selected.area, selected.city, selected.country].filter(Boolean).join("، ")}</span>
+            )}
+            {resolveError && (
+              <span className="mt-1.5 flex items-center gap-2 text-xs text-amber-600" data-testid={`${testIdPrefix}-resolve-error`}>
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {t("p11.map.resolveError")}
+                <button type="button" onClick={retryResolve} data-testid={`${testIdPrefix}-resolve-retry`} className="font-semibold text-[#F1701E] underline">{t("p11.map.retry")}</button>
+              </span>
+            )}
             <span className="block font-mono text-[11px] text-slate-400 mt-1 force-ltr">{t("p11.map.coordinates")}: {selected.lat.toFixed(5)}, {selected.lng.toFixed(5)}</span>
           </div>
         ) : <div className="text-sm text-slate-400">{t("shipment.searchLocation")}</div>}
       </div>
 
       <button type="button" disabled={!selected} data-testid={`${testIdPrefix}-confirm-btn`}
-        onClick={() => selected && onConfirm(selected)}
+        onClick={() => selected && onConfirm(finalizeSelected(selected))}
         className={`w-full font-semibold py-2.5 rounded-lg flex items-center justify-center gap-2 disabled:opacity-40 transition-colors ${accentConfirm ? "bg-[#F1701E] hover:bg-[#D95E0E] text-white" : "bg-[#16233A] hover:bg-[#0E1726] text-white"}`}>
         <Check className="w-4 h-4" /> {confirmLabel || t("common.confirm")}
       </button>

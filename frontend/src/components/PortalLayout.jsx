@@ -21,8 +21,31 @@ export function PortalLayout({ navItems, basePath, title, children }) {
   useEffect(() => { loadNotifs(); const i = setInterval(loadNotifs, 15000); return () => clearInterval(i); }, []);
   const unread = notifs.filter((n) => !n.read).length;
 
-  const markRead = async (n) => {
-    if (!n.read) { try { await api.post(`/notifications/${n.id}/read`); loadNotifs(); } catch {} }
+  const resolveLink = (n) => {
+    const m = n.meta || {};
+    const et = n.entity_type || m.entity_type;
+    const shipmentId = m.shipment_id;
+    if (basePath === "/customer") {
+      if (shipmentId) return `/customer/shipment/${shipmentId}`;
+      return "/customer";
+    }
+    if (basePath === "/driver") {
+      if (et === "trip" || n.type === "bid_accepted" || n.type === "trip_update") return "/driver/trip";
+      if (et === "verification" || n.type === "verification") return "/driver/verification";
+      if (et === "document" || n.type === "document") return "/driver/documents";
+      return "/driver";
+    }
+    if (basePath === "/provider") return "/provider";
+    return basePath;
+  };
+
+  const openNotification = async (n) => {
+    if (!n.read) {
+      try { await api.post(`/notifications/${n.id}/read`); } catch {}
+    }
+    setNotifOpen(false);
+    loadNotifs();
+    navigate(resolveLink(n));
   };
 
   const doLogout = () => { logout(); navigate("/"); };
@@ -88,7 +111,7 @@ export function PortalLayout({ navItems, basePath, title, children }) {
                     {notifs.length === 0 ? (
                       <div className="px-4 py-8 text-center text-sm text-slate-400">{t("common.none")}</div>
                     ) : notifs.map((n) => (
-                      <button key={n.id} onClick={() => markRead(n)} className={`w-full text-start px-4 py-3 border-b last:border-0 hover:bg-slate-50 ${!n.read ? "bg-orange-50/40" : ""}`}>
+                      <button key={n.id} data-testid={`notif-item-${n.id}`} onClick={() => openNotification(n)} className={`w-full text-start px-4 py-3 border-b last:border-0 hover:bg-slate-50 ${!n.read ? "bg-orange-50/40" : ""}`}>
                         <div className="text-sm font-semibold text-slate-800">{lang === "ar" ? n.title_ar : n.title_en}</div>
                         {(n.body_ar || n.body_en) && <div className="text-xs text-slate-500 mt-0.5">{lang === "ar" ? n.body_ar : n.body_en}</div>}
                       </button>

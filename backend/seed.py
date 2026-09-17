@@ -25,10 +25,15 @@ async def seed_admin():
             "name": "CARGO Administrator",
             "email": email,
             "password_hash": hash_password(password),
+            "admin_role_key": "super_admin",
+            "status": "active",
             "created_at": now_iso(),
         })
-    elif not verify_password(password, existing.get("password_hash", "")):
-        await db.users.update_one({"id": existing["id"]}, {"$set": {"password_hash": hash_password(password)}})
+    else:
+        upd = {"admin_role_key": existing.get("admin_role_key", "super_admin")}
+        if not verify_password(password, existing.get("password_hash", "")):
+            upd["password_hash"] = hash_password(password)
+        await db.users.update_one({"id": existing["id"]}, {"$set": upd})
 
 
 DEMO_DRIVERS = [
@@ -132,7 +137,65 @@ async def seed_shipments():
         })
 
 
+async def seed_phase11():
+    # Cargo categories
+    if await db.cargo_categories.count_documents({}) == 0:
+        cats = [
+            ("furniture", "أثاث", "Furniture", "sofa"),
+            ("household", "أغراض منزلية", "Household items", "home"),
+            ("electronics", "إلكترونيات", "Electronics", "smartphone"),
+            ("food", "مواد غذائية", "Food", "utensils"),
+            ("construction", "مواد بناء", "Construction materials", "hard-hat"),
+            ("commercial", "بضائع تجارية", "Commercial goods", "shopping-bag"),
+            ("machinery", "آلات ومعدات", "Machinery / Equipment", "cog"),
+            ("documents", "مستندات", "Documents", "file-text"),
+            ("vehicle", "مركبة", "Vehicle", "car"),
+            ("other", "أخرى", "Other", "package"),
+        ]
+        await db.cargo_categories.insert_many([
+            {"id": uid(), "key": k, "name_ar": ar, "name_en": en, "icon": ic, "active": True, "order": i, "created_at": now_iso()}
+            for i, (k, ar, en, ic) in enumerate(cats)
+        ])
+    # Document types
+    if await db.document_types.count_documents({}) == 0:
+        types = [
+            ("driving_license", "رخصة القيادة", "Driving License", "driver", True, True),
+            ("national_id", "الهوية الوطنية", "National ID", "driver", True, True),
+            ("vehicle_registration", "استمارة المركبة", "Vehicle Registration", "vehicle", True, True),
+            ("vehicle_insurance", "تأمين المركبة", "Vehicle Insurance", "vehicle", True, True),
+            ("vehicle_inspection", "الفحص الفني", "Vehicle Inspection", "vehicle", False, True),
+            ("health_certificate", "شهادة صحية", "Health Certificate", "driver", False, True),
+            ("commercial_permit", "تصريح تجاري", "Commercial Permit", "provider", False, True),
+        ]
+        await db.document_types.insert_many([
+            {"id": uid(), "key": k, "name_ar": ar, "name_en": en, "owner_type": ot,
+             "required": req, "has_expiry": exp, "active": True, "created_at": now_iso()}
+            for (k, ar, en, ot, req, exp) in types
+        ])
+    # RBAC roles
+    if await db.roles.count_documents({}) == 0:
+        from extra import PERMISSIONS
+        roles = [
+            ("super_admin", "مدير عام", "Super Admin", list(PERMISSIONS)),
+            ("operations_manager", "مدير العمليات", "Operations Manager",
+             ["users.view", "shipments.view", "shipments.edit", "shipments.cancel", "shipments.assign", "documents.view", "reports.view"]),
+            ("document_reviewer", "مدقق المستندات", "Document Reviewer",
+             ["documents.view", "documents.review", "documents.approve", "documents.reject"]),
+            ("finance_manager", "مدير مالي", "Finance Manager",
+             ["finance.view", "finance.transactions", "finance.commission", "finance.payouts", "finance.adjust", "finance.refund", "reports.view", "reports.export"]),
+            ("support", "دعم العملاء", "Customer Support", ["users.view", "shipments.view"]),
+        ]
+        await db.roles.insert_many([
+            {"id": uid(), "key": k, "name_ar": ar, "name_en": en, "permissions": p, "created_at": now_iso()}
+            for (k, ar, en, p) in roles
+        ])
+    # Platform settings
+    if not await db.settings.find_one({"id": "platform"}):
+        await db.settings.insert_one({"id": "platform", "commission_type": "percentage", "commission_value": 10, "currency": "OMR"})
+
+
 async def run_seed():
     await seed_admin()
     await seed_users()
     await seed_shipments()
+    await seed_phase11()

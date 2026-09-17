@@ -6,6 +6,9 @@ class Location(BaseModel):
     address: str = ""
     lat: float
     lng: float
+    city: Optional[str] = ""
+    area: Optional[str] = ""
+    country: Optional[str] = ""
 
 
 class OtpRequest(BaseModel):
@@ -44,9 +47,13 @@ class ShipmentCreate(BaseModel):
     title: str
     description: Optional[str] = ""
     category: Optional[str] = ""
+    category_key: Optional[str] = ""
     quantity: Optional[str] = ""
     weight: Optional[str] = ""
+    weight_unit: Optional[str] = "kg"
+    packages: Optional[str] = ""
     dimensions: Optional[str] = ""
+    fragile: Optional[bool] = False
     images: Optional[List[str]] = []
     pickup_location: Optional[Location] = None
     delivery_location: Optional[Location] = None

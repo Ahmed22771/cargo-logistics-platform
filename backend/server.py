@@ -287,7 +287,7 @@ async def submit_bid(sid: str, body: BidCreate, user: dict = Depends(require_rol
         await db.shipments.update_one({"id": sid}, {"$set": {"status": "BIDDING", "updated_at": now_iso()}})
     await create_notification(s["customer_id"], "new_bid", "عرض جديد على شحنتك", "New bid on your shipment",
                               f"عرض بقيمة {body.price} ر.ع على «{s['title']}»", f"A bid of OMR {body.price} on \"{s['title']}\"",
-                              {"shipment_id": sid, "bid_id": bid["id"]})
+                              {"shipment_id": sid, "bid_id": bid["id"], "entity_type": "shipment", "entity_id": sid})
     return clean(dict(bid))
 
 
@@ -350,7 +350,7 @@ async def accept_bid(bid_id: str, user: dict = Depends(require_roles("customer")
     }})
     await create_notification(bid["driver_id"], "bid_accepted", "تم قبول عرضك!", "Your bid was accepted!",
                               f"تم قبول عرضك على «{s['title']}»", f"Your bid on \"{s['title']}\" was accepted",
-                              {"trip_id": trip["id"], "shipment_id": s["id"]})
+                              {"trip_id": trip["id"], "shipment_id": s["id"], "entity_type": "trip", "entity_id": trip["id"]})
     return clean(dict(trip))
 
 
@@ -397,7 +397,8 @@ async def update_trip_status(tid: str, body: TripStatusUpdate, user: dict = Depe
     })
     await db.shipments.update_one({"id": t["shipment_id"]}, {"$set": {"status": body.status, "updated_at": now_iso()}})
     await create_notification(t["customer_id"], "trip_update", "تحديث حالة الرحلة", "Trip status updated",
-                              "", "", {"trip_id": tid, "status": body.status})
+                              "", "", {"trip_id": tid, "shipment_id": t["shipment_id"], "status": body.status,
+                                       "entity_type": "trip", "entity_id": tid})
     return await db.trips.find_one({"id": tid}, {"_id": 0})
 
 
@@ -444,6 +445,9 @@ async def review_trip(tid: str, body: ReviewCreate, user: dict = Depends(require
         }})
     await db.trips.update_one({"id": tid}, {"$set": {"status": "COMPLETED", "review_id": review["id"], "updated_at": now_iso()}})
     await db.shipments.update_one({"id": t["shipment_id"]}, {"$set": {"status": "COMPLETED", "updated_at": now_iso()}})
+    from extra import record_trip_completion
+    completed = await db.trips.find_one({"id": tid}, {"_id": 0})
+    await record_trip_completion(completed)
     return clean(dict(review))
 
 
@@ -530,7 +534,8 @@ async def admin_verify_driver(driver_id: str, body: VerifyAction, user: dict = D
         "PENDING": ("مطلوب تحديث المستندات", "Document changes requested"),
     }
     ta, te = titles[new_status]
-    await create_notification(driver_id, "verification", ta, te, body.notes or "", body.notes or "", {"status": new_status})
+    await create_notification(driver_id, "verification", ta, te, body.notes or "", body.notes or "",
+                              {"status": new_status, "entity_type": "verification", "entity_id": driver_id})
     return await db.users.find_one({"id": driver_id}, {"_id": 0, "password_hash": 0})
 
 
@@ -574,7 +579,9 @@ async def admin_audit(user: dict = Depends(require_roles("admin"))):
     return await db.audit_logs.find({}, {"_id": 0}).sort("timestamp", -1).to_list(500)
 
 
+from extra import extra_api
 app.include_router(api)
+app.include_router(extra_api)
 
 app.add_middleware(
     CORSMiddleware,

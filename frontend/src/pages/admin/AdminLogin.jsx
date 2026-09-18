@@ -22,7 +22,11 @@ export default function AdminLogin() {
       const { data } = await api.post("/auth/admin/login", { email, password });
       loginWithToken(data.token, data.user);
       toast.success(t("common.welcome"));
-    } catch (err) { toast.error(apiErr(err, t("auth.invalidCreds"))); }
+    } catch (err) {
+      const c = apiErr(err, t("auth.invalidCreds"));
+      const map = { ACCOUNT_SUSPENDED: t("p4.user.accountSuspended"), ACCOUNT_DISABLED: t("p4.user.accountDisabled") };
+      toast.error(map[c] || c);
+    }
     finally { setBusy(false); }
   };
 

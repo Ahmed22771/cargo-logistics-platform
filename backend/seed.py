@@ -203,8 +203,82 @@ async def seed_phase11():
         await db.settings.insert_one({"id": "platform", "commission_type": "percentage", "commission_value": 10, "currency": "OMR"})
 
 
+async def migrate_legacy_documents():
+    """Phase 4: idempotent, non-destructive migration of legacy users.documents[] into the
+    top-level `documents` collection. Runs once (guarded by a marker in settings) unless the
+    marker is cleared. Never deletes the legacy embedded list. Never inserts a duplicate.
+    Reports counts through the logger.
+    """
+    import logging
+    log = logging.getLogger("cargo.migrate.docs")
+    marker = await db.settings.find_one({"id": "phase4_doc_migration"})
+    if marker and marker.get("done"):
+        return {"skipped": True, "reason": "already_ran", "migrated": 0, "skipped_existing": 0, "unmapped": 0}
+
+    # Load document_type keys so we know if a legacy `type` maps to a real doc_type_key.
+    types = await db.document_types.find({}, {"_id": 0, "key": 1, "name_ar": 1, "name_en": 1, "owner_type": 1}).to_list(200)
+    type_by_key = {t["key"]: t for t in types}
+
+    migrated = 0
+    skipped_existing = 0
+    unmapped = 0
+
+    cur = db.users.find({"role": {"$in": ["driver", "provider"]}, "documents": {"$exists": True, "$ne": []}})
+    async for u in cur:
+        legacy = u.get("documents") or []
+        for ld in legacy:
+            legacy_type = ld.get("type") or ""
+            # Legacy stored 'vehicle_registration', 'insurance', 'driving_license' etc. Map.
+            key = legacy_type
+            if key == "insurance":
+                key = "vehicle_insurance"
+            dt = type_by_key.get(key)
+            if not dt:
+                unmapped += 1
+                continue
+            existing = await db.documents.find_one({"owner_id": u["id"], "doc_type_key": key})
+            if existing:
+                skipped_existing += 1
+                continue
+            new_doc = {
+                "id": uid(),
+                "owner_id": u["id"],
+                "owner_role": u.get("role", "driver"),
+                "owner_name": u.get("name", ""),
+                "doc_type_key": key,
+                "doc_type_name_ar": dt.get("name_ar", key),
+                "doc_type_name_en": dt.get("name_en", key),
+                "file": "",
+                "reference": ld.get("reference", ""),
+                "expiry": ld.get("expiry", ""),
+                "vehicle_id": None,
+                "status": (ld.get("status") or "PENDING"),
+                "uploaded_at": ld.get("submitted_at") or now_iso(),
+                "reviewed_by": None,
+                "reviewed_by_id": None,
+                "reviewed_at": ld.get("reviewed_at"),
+                "rejection_reason": "",
+                "notes": ld.get("notes", ""),
+                "migrated_from_legacy": True,
+                "created_at": now_iso(),
+            }
+            await db.documents.insert_one(new_doc)
+            migrated += 1
+
+    await db.settings.update_one(
+        {"id": "phase4_doc_migration"},
+        {"$set": {"done": True, "migrated": migrated, "skipped_existing": skipped_existing,
+                  "unmapped": unmapped, "ran_at": now_iso()}},
+        upsert=True,
+    )
+    log.info("Phase 4 legacy doc migration: migrated=%s skipped_existing=%s unmapped=%s",
+             migrated, skipped_existing, unmapped)
+    return {"skipped": False, "migrated": migrated, "skipped_existing": skipped_existing, "unmapped": unmapped}
+
+
 async def run_seed():
     await seed_admin()
     await seed_users()
     await seed_shipments()
     await seed_phase11()
+    await migrate_legacy_documents()

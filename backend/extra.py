@@ -187,16 +187,31 @@ async def my_documents(user: dict = Depends(get_current_user)):
 @extra_api.get("/admin/documents")
 async def admin_documents(status: Optional[str] = None, expiring: Optional[bool] = None,
                           owner_role: Optional[str] = None, doc_type: Optional[str] = None,
+                          owner_type: Optional[str] = None, q: Optional[str] = None,
                           user: dict = Depends(require_permission("documents.view"))):
-    q = {}
+    """List documents for admin review. Supports filters:
+    - status: PENDING | APPROVED | REJECTED
+    - owner_role: driver | provider
+    - owner_type: driver | vehicle | provider   (derived via document_types)
+    - doc_type: document_types.key
+    - expiring: True limits to EXPIRED or EXPIRING soon
+    - q: free-text search across owner name and doc_type name
+    """
+    query = {}
     if status:
-        q["status"] = status
+        query["status"] = status
     if owner_role:
-        q["owner_role"] = owner_role
+        query["owner_role"] = owner_role
     if doc_type:
-        q["doc_type_key"] = doc_type
-    docs = await db.documents.find(q, {"_id": 0}).sort("uploaded_at", -1).to_list(1000)
+        query["doc_type_key"] = doc_type
+    docs = await db.documents.find(query, {"_id": 0}).sort("uploaded_at", -1).to_list(2000)
+
+    # Build a doc_type_key -> owner_type map so we can classify DRIVER vs VEHICLE documents.
+    types = await db.document_types.find({}, {"_id": 0, "key": 1, "owner_type": 1}).to_list(200)
+    type_owner = {t["key"]: t.get("owner_type", "driver") for t in types}
+
     today = datetime.now(timezone.utc).date()
+    ql = (q or "").lower().strip()
     out = []
     for d in docs:
         flag = "OK"
@@ -211,10 +226,28 @@ async def admin_documents(status: Optional[str] = None, expiring: Optional[bool]
             except Exception:
                 pass
         d["expiry_flag"] = flag
+        d["owner_type"] = type_owner.get(d.get("doc_type_key"), "driver")
         if expiring and flag not in ("EXPIRED", "EXPIRING"):
+            continue
+        if owner_type and d["owner_type"] != owner_type:
+            continue
+        if ql and ql not in (d.get("owner_name", "") or "").lower() \
+                and ql not in (d.get("doc_type_name_en", "") or "").lower() \
+                and ql not in (d.get("doc_type_name_ar", "") or "").lower() \
+                and ql not in (d.get("reference", "") or "").lower():
             continue
         out.append(d)
     return out
+
+
+@extra_api.get("/admin/documents/{doc_id}")
+async def admin_document_detail(doc_id: str, user: dict = Depends(require_permission("documents.view"))):
+    d = await db.documents.find_one({"id": doc_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(status_code=404, detail="Document not found")
+    dt = await db.document_types.find_one({"key": d.get("doc_type_key")}, {"_id": 0})
+    d["owner_type"] = dt.get("owner_type", "driver") if dt else "driver"
+    return d
 
 
 @extra_api.post("/admin/documents/{doc_id}/review")
@@ -222,12 +255,29 @@ async def review_document(doc_id: str, body: DocReview, user: dict = Depends(req
     d = await db.documents.find_one({"id": doc_id})
     if not d:
         raise HTTPException(status_code=404, detail="Document not found")
+    if body.action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="Invalid action")
     new_status = "APPROVED" if body.action == "approve" else "REJECTED"
+    old_status = d.get("status")
     await db.documents.update_one({"id": doc_id}, {"$set": {
-        "status": new_status, "reviewed_by": user.get("name"), "reviewed_at": now_iso(),
-        "rejection_reason": body.reason or "", "notes": body.notes or "",
+        "status": new_status,
+        "reviewed_by": user.get("name"),
+        "reviewed_by_id": user["id"],
+        "reviewed_at": now_iso(),
+        "rejection_reason": body.reason or "" if new_status == "REJECTED" else "",
+        "notes": body.notes or "",
     }})
-    await audit(user, f"document_{body.action}", "document", doc_id, old=d.get("status"), new=new_status, reason=body.reason)
+    action_name = "DOCUMENT_APPROVED" if new_status == "APPROVED" else "DOCUMENT_REJECTED"
+    await db.audit_logs.insert_one({
+        "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
+        "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": user.get("admin_role_key", "admin"),
+        "action": action_name, "entity": "document", "entity_id": doc_id,
+        "old_value": {"status": old_status},
+        "new_value": {"status": new_status, "owner_id": d.get("owner_id"),
+                      "owner_role": d.get("owner_role"), "doc_type_key": d.get("doc_type_key"),
+                      "rejection_reason": body.reason or "", "notes": body.notes or ""},
+        "reason": body.reason or "", "result": "success", "timestamp": now_iso(),
+    })
     ta, te = ("تم اعتماد المستند", "Document approved") if new_status == "APPROVED" else ("تم رفض المستند", "Document rejected")
     await notify(d["owner_id"], "document", ta, te, body.reason or "", body.reason or "",
                  entity_type="document", entity_id=doc_id)
@@ -384,6 +434,131 @@ async def admin_reset_password(target_id: str, body: ResetPwBody, user: dict = D
     await db.users.update_one({"id": target_id}, {"$set": {"password_hash": hash_password(body.password), "updated_at": now_iso()}})
     await audit(user, "password_reset", "user", target_id)
     return {"success": True}
+
+
+# ================= SUSPEND / ACTIVATE (Phase 4) =================
+class SuspendBody(BaseModel):
+    reason: Optional[str] = ""
+
+
+async def _count_active_super_admins() -> int:
+    """Count admins with admin_role_key=super_admin that are not currently suspended/disabled."""
+    cur = db.users.find(
+        {"role": "admin", "admin_role_key": "super_admin"},
+        {"_id": 0, "id": 1, "status": 1},
+    )
+    n = 0
+    async for u in cur:
+        st = (u.get("status") or "active").lower()
+        if st not in ("disabled", "inactive", "suspended"):
+            n += 1
+    return n
+
+
+@extra_api.post("/admin/users/{target_id}/suspend")
+async def suspend_user(target_id: str, body: SuspendBody, user: dict = Depends(require_permission("users.suspend"))):
+    """Suspend any user (customer/driver/provider/admin). Blocks future authentication."""
+    if target_id == user["id"]:
+        raise HTTPException(status_code=400, detail="CANNOT_SUSPEND_SELF")
+    target = await db.users.find_one({"id": target_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    # Protect the last active Super Admin
+    if target.get("role") == "admin" and target.get("admin_role_key") == "super_admin":
+        active = await _count_active_super_admins()
+        # If this super_admin is currently active, suspending them would drop the count by one
+        target_active = (target.get("status") or "active").lower() not in ("disabled", "inactive", "suspended")
+        if target_active and active <= 1:
+            raise HTTPException(status_code=400, detail="CANNOT_SUSPEND_LAST_SUPER_ADMIN")
+
+    reason = (body.reason or "").strip()
+    history_entry = {
+        "id": uid(), "action": "SUSPENDED", "reason": reason,
+        "by_id": user["id"], "by_name": user.get("name", ""),
+        "at": now_iso(),
+    }
+    updates = {
+        "status": "suspended",
+        "suspension_reason": reason,
+        "suspended_by": user.get("name", ""),
+        "suspended_by_id": user["id"],
+        "suspended_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    await db.users.update_one(
+        {"id": target_id},
+        {"$set": updates, "$push": {"suspension_history": history_entry}},
+    )
+    await db.audit_logs.insert_one({
+        "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
+        "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": user.get("admin_role_key", "admin"),
+        "action": "USER_SUSPENDED", "entity": "user", "entity_id": target_id,
+        "old_value": {"status": target.get("status", "active")},
+        "new_value": {"status": "suspended", "target_role": target.get("role"),
+                      "target_name": target.get("name"), "reason": reason},
+        "reason": reason, "result": "success", "timestamp": now_iso(),
+    })
+    ta, te = ("تم إيقاف حسابك", "Your account has been suspended")
+    await notify(target_id, "account", ta, te, reason, reason,
+                 entity_type="user", entity_id=target_id)
+    return {"id": target_id, "status": "suspended", "reason": reason}
+
+
+@extra_api.post("/admin/users/{target_id}/activate")
+async def activate_user(target_id: str, user: dict = Depends(require_permission("users.suspend"))):
+    """Reactivate a previously suspended (or legacy-disabled) user. Preserves suspension_history."""
+    target = await db.users.find_one({"id": target_id})
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    old_status = target.get("status", "active")
+    history_entry = {
+        "id": uid(), "action": "ACTIVATED", "reason": "",
+        "by_id": user["id"], "by_name": user.get("name", ""),
+        "at": now_iso(),
+    }
+    await db.users.update_one(
+        {"id": target_id},
+        {
+            "$set": {
+                "status": "active",
+                "activated_by": user.get("name", ""),
+                "activated_by_id": user["id"],
+                "activated_at": now_iso(),
+                "updated_at": now_iso(),
+            },
+            "$push": {"suspension_history": history_entry},
+        },
+    )
+    await db.audit_logs.insert_one({
+        "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
+        "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": user.get("admin_role_key", "admin"),
+        "action": "USER_ACTIVATED", "entity": "user", "entity_id": target_id,
+        "old_value": {"status": old_status},
+        "new_value": {"status": "active", "target_role": target.get("role"),
+                      "target_name": target.get("name")},
+        "reason": "", "result": "success", "timestamp": now_iso(),
+    })
+    ta, te = ("تم تفعيل حسابك", "Your account has been reactivated")
+    await notify(target_id, "account", ta, te, "", "",
+                 entity_type="user", entity_id=target_id)
+    return {"id": target_id, "status": "active"}
+
+
+@extra_api.get("/admin/users/{target_id}/suspension-history")
+async def suspension_history(target_id: str, user: dict = Depends(require_permission("users.view"))):
+    u = await db.users.find_one({"id": target_id}, {"_id": 0, "password_hash": 0})
+    if not u:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {
+        "id": target_id,
+        "status": u.get("status", "active"),
+        "suspension_reason": u.get("suspension_reason", ""),
+        "suspended_by": u.get("suspended_by", ""),
+        "suspended_at": u.get("suspended_at"),
+        "activated_by": u.get("activated_by", ""),
+        "activated_at": u.get("activated_at"),
+        "history": u.get("suspension_history", []),
+    }
 
 
 # ================= FINANCE =================

@@ -139,7 +139,10 @@ async def otp_verify(body: OtpVerify, response: Response):
         await db.users.insert_one(new)
         user = new
     else:
-        if (user.get("status") or "active").lower() in ("disabled", "inactive", "suspended"):
+        raw_status = (user.get("status") or "active").lower()
+        if raw_status == "suspended":
+            raise HTTPException(status_code=403, detail="ACCOUNT_SUSPENDED")
+        if raw_status in ("disabled", "inactive"):
             raise HTTPException(status_code=403, detail="ACCOUNT_DISABLED")
     await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now_iso()}})
     user["last_login"] = now_iso()
@@ -152,7 +155,10 @@ async def admin_login(body: AdminLogin):
     user = await db.users.find_one({"email": body.email.lower(), "role": "admin"})
     if not user or not verify_password(body.password, user.get("password_hash", "")):
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    if (user.get("status") or "active").lower() in ("disabled", "inactive", "suspended"):
+    raw_status = (user.get("status") or "active").lower()
+    if raw_status == "suspended":
+        raise HTTPException(status_code=403, detail="ACCOUNT_SUSPENDED")
+    if raw_status in ("disabled", "inactive"):
         raise HTTPException(status_code=403, detail="ACCOUNT_DISABLED")
     await db.users.update_one({"id": user["id"]}, {"$set": {"last_login": now_iso()}})
     token = create_access_token(user["id"], "admin")
@@ -640,10 +646,21 @@ async def admin_users(q: str = "", role: str = "", status: str = "", user: dict 
     ql = (q or "").lower().strip()
     out = []
     for u in docs:
-        st = "disabled" if (u.get("status") or "active").lower() in ("disabled", "inactive", "suspended") else "active"
+        raw = (u.get("status") or "active").lower()
+        # Phase 4: distinguish suspended (new) from disabled (legacy). Both block login.
+        if raw == "suspended":
+            st = "suspended"
+        elif raw in ("disabled", "inactive"):
+            st = "disabled"
+        else:
+            st = "active"
         u["status"] = st
-        if status and status != st:
-            continue
+        if status:
+            # Accept 'blocked' as a synonym for either suspended or disabled
+            if status == "blocked" and st in ("suspended", "disabled"):
+                pass
+            elif status != st:
+                continue
         if ql and ql not in (u.get("name", "") or "").lower() and ql not in (u.get("phone", "") or "").lower() and ql not in (u.get("email", "") or "").lower():
             continue
         out.append(u)

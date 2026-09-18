@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { toast } from "sonner";
-import { Search, Pencil, KeyRound, Ban, CheckCircle2, X } from "lucide-react";
+import { Search, Pencil, KeyRound, Ban, CheckCircle2, X, History } from "lucide-react";
 import { Table } from "./AdminLayout";
-import { Btn, Spinner, PageHeader, Input, Field, Textarea } from "../../components/ui-kit";
+import { Btn, Spinner, PageHeader, Input, Field, Textarea, Card } from "../../components/ui-kit";
+import { useAuth } from "../../context/AuthContext";
 import { useI18n } from "../../i18n";
 import api, { apiErr } from "../../lib/api";
 
@@ -13,11 +14,17 @@ const ROLE_CLS = {
   provider: "bg-emerald-50 text-emerald-700 border border-emerald-200",
 };
 
-function Modal({ title, onClose, children }) {
+const STATUS_CLS = {
+  active: "bg-emerald-50 text-emerald-700",
+  suspended: "bg-red-50 text-red-600",
+  disabled: "bg-slate-100 text-slate-500",
+};
+
+function Modal({ title, onClose, children, wide }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl w-full max-w-md p-6" data-testid="user-modal">
+      <div className={`relative bg-white rounded-2xl w-full ${wide ? "max-w-lg" : "max-w-md"} p-6`} data-testid="user-modal">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-bold text-lg text-[#16233A]">{title}</h2>
           <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
@@ -30,6 +37,7 @@ function Modal({ title, onClose, children }) {
 
 export default function AdminUsers() {
   const { t, lang } = useI18n();
+  const { user: currentUser } = useAuth();
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(false);
   const [q, setQ] = useState("");
@@ -38,6 +46,9 @@ export default function AdminUsers() {
   const [roles, setRoles] = useState([]);
   const [edit, setEdit] = useState(null);
   const [pw, setPw] = useState(null);
+  const [suspend, setSuspend] = useState(null); // {user, reason}
+  const [activate, setActivate] = useState(null);
+  const [history, setHistory] = useState(null); // {user, data}
   const [busy, setBusy] = useState(false);
   const debounce = useRef(null);
 
@@ -60,6 +71,7 @@ export default function AdminUsers() {
   const roleName = (key) => { const r = roles.find((x) => x.key === key); return r ? (lang === "ar" ? r.name_ar : r.name_en) : (key || "Admin"); };
   const roleLabel = { admin: "Admin", customer: t("auth.customer"), driver: t("auth.driver"), provider: t("auth.provider") };
   const fmt = (d) => d ? new Date(d).toLocaleString(lang === "ar" ? "ar-OM" : "en-GB", { dateStyle: "short", timeStyle: "short" }) : t("p11.rbac.never");
+  const statusLabel = (s) => s === "suspended" ? t("p4.user.suspended") : s === "disabled" ? t("p4.user.disabled") : t("p4.user.active");
 
   const saveEdit = async () => {
     setBusy(true);
@@ -70,16 +82,44 @@ export default function AdminUsers() {
       toast.success(t("common.success")); setEdit(null); load();
     } catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
   };
-  const toggleStatus = async (u) => {
-    const next = u.status === "disabled" ? "active" : "disabled";
-    try { await api.post(`/admin/users/${u.id}/status`, { status: next }); toast.success(t("common.success")); load(); }
-    catch (e) { toast.error(apiErr(e)); }
-  };
+
   const savePw = async () => {
     if (!pw.password || pw.password.length < 6) { toast.error(t("p11.rbac.pwHint")); return; }
     setBusy(true);
     try { await api.post(`/admin/users/${pw.id}/reset-password`, { password: pw.password }); toast.success(t("common.success")); setPw(null); }
     catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
+  };
+
+  const doSuspend = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/admin/users/${suspend.user.id}/suspend`, { reason: suspend.reason || "" });
+      toast.success(t("common.success"));
+      setSuspend(null); load();
+    } catch (e) {
+      const code = apiErr(e);
+      const map = {
+        CANNOT_SUSPEND_SELF: t("p4.user.cannotSuspendSelf"),
+        CANNOT_SUSPEND_LAST_SUPER_ADMIN: t("p4.user.cannotSuspendLast"),
+      };
+      toast.error(map[code] || code);
+    } finally { setBusy(false); }
+  };
+
+  const doActivate = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/admin/users/${activate.id}/activate`);
+      toast.success(t("common.success"));
+      setActivate(null); load();
+    } catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
+  };
+
+  const openHistory = async (u) => {
+    try {
+      const { data } = await api.get(`/admin/users/${u.id}/suspension-history`);
+      setHistory({ user: u, data });
+    } catch (e) { toast.error(apiErr(e)); }
   };
 
   return (
@@ -100,8 +140,9 @@ export default function AdminUsers() {
         </select>
         <select data-testid="users-status-filter" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border border-slate-300 rounded-lg px-3 py-2 text-sm bg-white">
           <option value="">{t("p11.rbac.allStatus")}</option>
-          <option value="active">{t("p11.rbac.active")}</option>
-          <option value="disabled">{t("p11.rbac.disabled")}</option>
+          <option value="active">{t("p4.user.active")}</option>
+          <option value="suspended">{t("p4.user.suspended")}</option>
+          <option value="disabled">{t("p4.user.disabled")}</option>
         </select>
       </div>
 
@@ -112,23 +153,34 @@ export default function AdminUsers() {
       ) : (
         <Table testId="admin-users-table" rows={rows}
           columns={[t("auth.name"), t("p11.rbac.role"), t("common.status"), t("auth.phone"), t("auth.email"), t("p11.rbac.lastLogin"), t("p11.rbac.actions")]}
-          renderRow={(u) => (
-            <tr key={u.id} data-testid={`admin-user-${u.id}`} className="hover:bg-slate-50">
-              <td className="px-4 py-3 font-semibold text-[#16233A]">{u.name}{u.notes ? <span className="block text-[11px] font-normal text-slate-400">{u.notes}</span> : null}</td>
-              <td className="px-4 py-3"><span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${ROLE_CLS[u.role]}`}>{u.role === "admin" ? roleName(u.admin_role_key) : roleLabel[u.role]}</span></td>
-              <td className="px-4 py-3"><span data-testid={`user-status-${u.id}`} className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${u.status === "disabled" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"}`}>{u.status === "disabled" ? t("p11.rbac.disabled") : t("p11.rbac.active")}</span></td>
-              <td className="px-4 py-3 font-mono text-xs force-ltr">{u.phone || "\u2014"}</td>
-              <td className="px-4 py-3 text-slate-500 force-ltr">{u.email || "\u2014"}</td>
-              <td className="px-4 py-3 text-xs text-slate-400">{fmt(u.last_login)}</td>
-              <td className="px-4 py-3">
-                <div className="flex items-center gap-1.5">
-                  <button data-testid={`user-edit-${u.id}`} onClick={() => setEdit({ ...u })} title={t("p11.rbac.edit")} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"><Pencil className="w-4 h-4" /></button>
-                  <button data-testid={`user-toggle-${u.id}`} onClick={() => toggleStatus(u)} title={u.status === "disabled" ? t("p11.rbac.enable") : t("p11.rbac.disable")} className={`p-1.5 rounded-lg hover:bg-slate-100 ${u.status === "disabled" ? "text-emerald-600" : "text-red-500"}`}>{u.status === "disabled" ? <CheckCircle2 className="w-4 h-4" /> : <Ban className="w-4 h-4" />}</button>
-                  {u.role === "admin" && <button data-testid={`user-reset-${u.id}`} onClick={() => setPw({ id: u.id, password: "" })} title={t("p11.rbac.resetPassword")} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"><KeyRound className="w-4 h-4" /></button>}
-                </div>
-              </td>
-            </tr>
-          )}
+          renderRow={(u) => {
+            const isSelf = currentUser && currentUser.id === u.id;
+            const isSuspendedOrDisabled = u.status === "suspended" || u.status === "disabled";
+            return (
+              <tr key={u.id} data-testid={`admin-user-${u.id}`} className="hover:bg-slate-50">
+                <td className="px-4 py-3 font-semibold text-[#16233A]">{u.name}{u.notes ? <span className="block text-[11px] font-normal text-slate-400">{u.notes}</span> : null}</td>
+                <td className="px-4 py-3"><span className={`inline-flex px-2.5 py-1 rounded-full text-xs font-semibold ${ROLE_CLS[u.role]}`}>{u.role === "admin" ? roleName(u.admin_role_key) : roleLabel[u.role]}</span></td>
+                <td className="px-4 py-3">
+                  <span data-testid={`user-status-${u.id}`} className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_CLS[u.status] || STATUS_CLS.active}`}>{statusLabel(u.status)}</span>
+                </td>
+                <td className="px-4 py-3 font-mono text-xs force-ltr">{u.phone || "\u2014"}</td>
+                <td className="px-4 py-3 text-slate-500 force-ltr">{u.email || "\u2014"}</td>
+                <td className="px-4 py-3 text-xs text-slate-400">{fmt(u.last_login)}</td>
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-1.5">
+                    <button data-testid={`user-edit-${u.id}`} onClick={() => setEdit({ ...u })} title={t("p11.rbac.edit")} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"><Pencil className="w-4 h-4" /></button>
+                    {isSuspendedOrDisabled ? (
+                      <button data-testid={`user-activate-${u.id}`} onClick={() => setActivate(u)} title={t("p4.user.activate")} className="p-1.5 rounded-lg hover:bg-emerald-50 text-emerald-600"><CheckCircle2 className="w-4 h-4" /></button>
+                    ) : (
+                      <button data-testid={`user-suspend-${u.id}`} onClick={() => setSuspend({ user: u, reason: "" })} disabled={isSelf} title={isSelf ? t("p4.user.cannotSuspendSelf") : t("p4.user.suspend")} className={`p-1.5 rounded-lg text-red-500 ${isSelf ? "opacity-30 pointer-events-none" : "hover:bg-red-50"}`}><Ban className="w-4 h-4" /></button>
+                    )}
+                    <button data-testid={`user-history-${u.id}`} onClick={() => openHistory(u)} title={t("p4.user.history")} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"><History className="w-4 h-4" /></button>
+                    {u.role === "admin" && <button data-testid={`user-reset-${u.id}`} onClick={() => setPw({ id: u.id, password: "" })} title={t("p11.rbac.resetPassword")} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500"><KeyRound className="w-4 h-4" /></button>}
+                  </div>
+                </td>
+              </tr>
+            );
+          }}
         />
       )}
 
@@ -156,6 +208,79 @@ export default function AdminUsers() {
           <div className="space-y-4">
             <Field label={t("p11.rbac.newPassword")} hint={t("p11.rbac.pwHint")}><Input type="password" data-testid="reset-pw-input" value={pw.password} onChange={(e) => setPw({ ...pw, password: e.target.value })} className="force-ltr" /></Field>
             <Btn variant="accent" onClick={savePw} disabled={busy} data-testid="reset-pw-save" className="w-full">{t("p11.rbac.save")}</Btn>
+          </div>
+        </Modal>
+      )}
+
+      {suspend && (
+        <Modal onClose={() => setSuspend(null)} title={t("p4.user.suspendTitle")}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">{t("p4.user.suspendConfirm")}</p>
+            <div className="bg-slate-50 rounded-lg p-3 text-sm">
+              <div className="font-semibold text-[#16233A]">{suspend.user.name}</div>
+              <div className="text-xs text-slate-500 font-mono">{suspend.user.phone || suspend.user.email}</div>
+            </div>
+            <Field label={t("p4.user.suspendReason")}>
+              <Textarea rows={2} data-testid="suspend-reason" placeholder={t("p4.user.suspendReasonPh")}
+                value={suspend.reason} onChange={(e) => setSuspend({ ...suspend, reason: e.target.value })} />
+            </Field>
+            <div className="flex gap-2">
+              <Btn variant="secondary" onClick={() => setSuspend(null)} className="flex-1">{t("common.cancel")}</Btn>
+              <Btn variant="danger" onClick={doSuspend} disabled={busy} data-testid="suspend-confirm" className="flex-1">
+                <Ban className="w-4 h-4" /> {t("p4.user.suspend")}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {activate && (
+        <Modal onClose={() => setActivate(null)} title={t("p4.user.activateTitle")}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-600">{t("p4.user.activateConfirm")}</p>
+            <div className="bg-slate-50 rounded-lg p-3 text-sm">
+              <div className="font-semibold text-[#16233A]">{activate.name}</div>
+              <div className="text-xs text-slate-500 font-mono">{activate.phone || activate.email}</div>
+            </div>
+            <div className="flex gap-2">
+              <Btn variant="secondary" onClick={() => setActivate(null)} className="flex-1">{t("common.cancel")}</Btn>
+              <Btn variant="accent" onClick={doActivate} disabled={busy} data-testid="activate-confirm" className="flex-1">
+                <CheckCircle2 className="w-4 h-4" /> {t("p4.user.activate")}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {history && (
+        <Modal wide onClose={() => setHistory(null)} title={t("p4.user.history")}>
+          <div className="space-y-3">
+            <div className="bg-slate-50 rounded-lg p-3 text-sm">
+              <div className="font-semibold text-[#16233A]">{history.user.name}</div>
+              <div className="text-xs text-slate-500 font-mono">{history.user.phone || history.user.email}</div>
+              <div className="mt-2">
+                <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${STATUS_CLS[history.data.status] || STATUS_CLS.active}`}>{statusLabel(history.data.status)}</span>
+              </div>
+              {history.data.suspension_reason && (
+                <div className="text-xs text-red-600 mt-2">{history.data.suspension_reason}</div>
+              )}
+            </div>
+            {(!history.data.history || history.data.history.length === 0) ? (
+              <Card className="!p-4 text-center text-sm text-slate-400">—</Card>
+            ) : (
+              <div className="space-y-2 max-h-80 overflow-y-auto">
+                {history.data.history.slice().reverse().map((h) => (
+                  <div key={h.id} className="border border-slate-200 rounded-lg p-3 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span className={`inline-flex px-2 py-0.5 rounded-full text-[11px] font-semibold ${h.action === "SUSPENDED" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>{h.action}</span>
+                      <span className="text-xs text-slate-400">{fmt(h.at)}</span>
+                    </div>
+                    <div className="text-xs text-slate-500 mt-1">{h.by_name}</div>
+                    {h.reason && <div className="text-xs text-slate-600 mt-1">{h.reason}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </Modal>
       )}

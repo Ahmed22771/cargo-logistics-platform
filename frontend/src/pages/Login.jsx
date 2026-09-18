@@ -52,7 +52,9 @@ export default function Login() {
       toast.success(`${t("common.welcome")} ${data.user.name}`);
       navigate(`/${role}`);
     } catch (err) {
-      toast.error(apiErr(err));
+      const c = apiErr(err);
+      const map = { ACCOUNT_SUSPENDED: t("p4.user.accountSuspended"), ACCOUNT_DISABLED: t("p4.user.accountDisabled") };
+      toast.error(map[c] || c);
     } finally { setLoading(false); }
   };
 

@@ -22,7 +22,7 @@ from auth import (
 from seed import run_seed
 from models import (
     OtpRequest, OtpVerify, AdminLogin, ProfileUpdate, DocumentSubmit,
-    ShipmentCreate, BidCreate, TripStatusUpdate, DeliveryConfirm, ReviewCreate, VerifyAction,
+    ShipmentCreate, BidCreate, TripStatusUpdate, DeliveryConfirm, ReviewCreate, VerifyAction, DisputeCreate,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -432,6 +432,60 @@ TRIP_FLOW = [
     "IN_TRANSIT", "NEAR_DESTINATION", "DRIVER_ARRIVED_DESTINATION",
     "DELIVERED_PENDING_CONFIRMATION",
 ]
+TERMINAL_STATES = {"DELIVERED", "COMPLETED", "CANCELLED", "DISPUTED"}
+DEFAULT_AUTO_COMPLETE_HOURS = 48
+
+
+async def _maybe_auto_complete(t: dict) -> dict:
+    """Phase 5A lazy auto-completion. If a trip is stuck in DELIVERED_PENDING_CONFIRMATION
+    beyond the configured timeout, mark it COMPLETED (system) and fire the ledger. Called
+    at every trip read for the affected roles."""
+    if not t or t.get("status") != "DELIVERED_PENDING_CONFIRMATION":
+        return t
+    try:
+        from datetime import datetime as _dt
+        from extra import get_settings as _get_settings, record_trip_completion as _rec
+        s = await _get_settings()
+        hours = float(s.get("auto_complete_hours") or DEFAULT_AUTO_COMPLETE_HOURS)
+        marker = t.get("delivered_pending_at") or t.get("updated_at") or t.get("created_at")
+        if not marker:
+            return t
+        elapsed = (datetime.now(timezone.utc) - _dt.fromisoformat(marker.replace("Z", "+00:00"))).total_seconds() / 3600.0
+        if elapsed < hours:
+            return t
+        claimed = await db.trips.update_one(
+            {"id": t["id"], "status": "DELIVERED_PENDING_CONFIRMATION"},
+            {"$set": {
+                "status": "COMPLETED", "customer_confirmed": True, "auto_completed": True,
+                "delivery_confirmation": {
+                    "reference": "", "confirmed_at": now_iso(),
+                    "confirmed_by": "system", "auto": True,
+                },
+                "delivered_at": now_iso(), "completed_at": now_iso(), "updated_at": now_iso(),
+            }},
+        )
+        if claimed.modified_count == 1:
+            await db.shipments.update_one({"id": t["shipment_id"]}, {"$set": {"status": "COMPLETED", "updated_at": now_iso()}})
+            fresh = await db.trips.find_one({"id": t["id"]}, {"_id": 0})
+            await _rec(fresh)
+            await db.audit_logs.insert_one({
+                "id": uid(), "admin_id": "system", "admin_name": "system",
+                "actor_id": "system", "actor_name": "system", "actor_role": "system",
+                "action": "TRIP_AUTO_COMPLETED", "entity": "trip", "entity_id": t["id"],
+                "old_value": {"status": "DELIVERED_PENDING_CONFIRMATION"},
+                "new_value": {"status": "COMPLETED", "auto": True, "elapsed_hours": round(elapsed, 2)},
+                "reason": f"Auto-completed after {round(elapsed,1)}h without customer confirmation",
+                "result": "success", "timestamp": now_iso(),
+            })
+            await create_notification(t["customer_id"], "trip_auto_completed",
+                                      "تم إكمال الرحلة تلقائيًا", "Trip auto-completed",
+                                      "لم يتم تأكيد الاستلام خلال المهلة المحددة.",
+                                      "Delivery was not confirmed within the allowed window.",
+                                      {"trip_id": t["id"], "entity_type": "trip", "entity_id": t["id"]})
+            return fresh
+    except Exception as _e:
+        logger.warning("auto-complete check failed for trip %s: %s", t.get("id"), _e)
+    return t
 
 
 @api.get("/trips/mine")
@@ -444,7 +498,12 @@ async def my_trips(user: dict = Depends(get_current_user)):
         q = {"provider_id": user["id"]}
     else:
         q = {}
-    return await db.trips.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    trips = await db.trips.find(q, {"_id": 0}).sort("created_at", -1).to_list(500)
+    # Lazy auto-complete pass (only touches DELIVERED_PENDING_CONFIRMATION beyond threshold)
+    refreshed = []
+    for tr in trips:
+        refreshed.append(await _maybe_auto_complete(tr))
+    return refreshed
 
 
 @api.get("/trips/{tid}")
@@ -452,6 +511,7 @@ async def get_trip(tid: str, user: dict = Depends(get_current_user)):
     t = await db.trips.find_one({"id": tid}, {"_id": 0})
     if not t or not can_access_trip(t, user):
         raise HTTPException(status_code=404, detail="Trip not found")
+    t = await _maybe_auto_complete(t)
     return t
 
 
@@ -460,6 +520,8 @@ async def update_trip_status(tid: str, body: TripStatusUpdate, user: dict = Depe
     t = await db.trips.find_one({"id": tid})
     if not t or t["driver_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Trip not found")
+    if t.get("status") in TERMINAL_STATES:
+        raise HTTPException(status_code=400, detail="TRIP_IN_TERMINAL_STATE")
     if body.status not in TRIP_FLOW:
         raise HTTPException(status_code=400, detail="Invalid status")
     try:
@@ -469,11 +531,32 @@ async def update_trip_status(tid: str, body: TripStatusUpdate, user: dict = Depe
     has_next_state = current_index + 1 < len(TRIP_FLOW)
     if not has_next_state or body.status != TRIP_FLOW[current_index + 1]:
         raise HTTPException(status_code=400, detail="INVALID_TRIP_TRANSITION")
+
+    # Phase 5A: Proof of Delivery is REQUIRED to reach DELIVERED_PENDING_CONFIRMATION
+    updates = {"status": body.status, "updated_at": now_iso()}
+    if body.status == "DELIVERED_PENDING_CONFIRMATION":
+        if not (body.pod_photo or "").strip():
+            raise HTTPException(status_code=400, detail="POD_REQUIRED")
+        updates["delivered_pending_at"] = now_iso()
+        updates["delivery_proof"] = {
+            "photo": body.pod_photo,
+            "notes": body.pod_notes or "",
+            "delivered_by_id": user["id"],
+            "delivered_by_name": user.get("name", ""),
+            "lat": body.lat, "lng": body.lng,
+            "at": now_iso(),
+        }
+        await db.audit_logs.insert_one({
+            "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
+            "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": "driver",
+            "action": "TRIP_POD_SUBMITTED", "entity": "trip", "entity_id": tid,
+            "old_value": {"status": t.get("status")},
+            "new_value": {"status": body.status, "has_photo": True, "notes_len": len(body.pod_notes or "")},
+            "reason": "", "result": "success", "timestamp": now_iso(),
+        })
+
     event = {"id": uid(), "status": body.status, "lat": body.lat, "lng": body.lng, "timestamp": now_iso()}
-    await db.trips.update_one({"id": tid}, {
-        "$set": {"status": body.status, "updated_at": now_iso()},
-        "$push": {"tracking_events": event},
-    })
+    await db.trips.update_one({"id": tid}, {"$set": updates, "$push": {"tracking_events": event}})
     await db.shipments.update_one({"id": t["shipment_id"]}, {"$set": {"status": body.status, "updated_at": now_iso()}})
     await create_notification(t["customer_id"], "trip_update", "تحديث حالة الرحلة", "Trip status updated",
                               "", "", {"trip_id": tid, "shipment_id": t["shipment_id"], "status": body.status,
@@ -483,19 +566,88 @@ async def update_trip_status(tid: str, body: TripStatusUpdate, user: dict = Depe
 
 @api.post("/trips/{tid}/confirm-delivery")
 async def confirm_delivery(tid: str, body: DeliveryConfirm, user: dict = Depends(require_roles("customer"))):
+    """Customer confirms receipt. Phase 5A: transitions all the way to COMPLETED (no more
+    sticky DELIVERED-only state) and triggers the immutable ledger. Rating remains optional."""
     t = await db.trips.find_one({"id": tid})
     if not t or t["customer_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Trip not found")
     if t.get("status") != "DELIVERED_PENDING_CONFIRMATION":
         raise HTTPException(status_code=400, detail="Trip is not ready for delivery confirmation")
-    await db.trips.update_one({"id": tid}, {"$set": {
-        "status": "DELIVERED", "customer_confirmed": True,
-        "delivery_confirmation": {"reference": body.reference or "", "confirmed_at": now_iso()},
-        "updated_at": now_iso(),
-    }})
-    await db.shipments.update_one({"id": t["shipment_id"]}, {"$set": {"status": "DELIVERED", "updated_at": now_iso()}})
+    claimed = await db.trips.update_one(
+        {"id": tid, "status": "DELIVERED_PENDING_CONFIRMATION"},
+        {"$set": {
+            "status": "COMPLETED", "customer_confirmed": True, "auto_completed": False,
+            "delivery_confirmation": {
+                "reference": body.reference or "", "confirmed_at": now_iso(),
+                "confirmed_by": user.get("name", ""), "confirmed_by_id": user["id"],
+                "lat": body.lat, "lng": body.lng,
+                "delivered_to_name": body.delivered_to_name or "",
+                "auto": False,
+            },
+            "delivered_at": now_iso(), "completed_at": now_iso(), "updated_at": now_iso(),
+        }},
+    )
+    if claimed.modified_count != 1:
+        raise HTTPException(status_code=409, detail="Trip already confirmed or state changed")
+    await db.shipments.update_one({"id": t["shipment_id"]}, {"$set": {"status": "COMPLETED", "updated_at": now_iso()}})
+    fresh = await db.trips.find_one({"id": tid}, {"_id": 0})
+    from extra import record_trip_completion
+    await record_trip_completion(fresh)
+    await db.audit_logs.insert_one({
+        "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
+        "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": "customer",
+        "action": "TRIP_DELIVERY_CONFIRMED", "entity": "trip", "entity_id": tid,
+        "old_value": {"status": "DELIVERED_PENDING_CONFIRMATION"},
+        "new_value": {"status": "COMPLETED"},
+        "reason": "", "result": "success", "timestamp": now_iso(),
+    })
     await create_notification(t["driver_id"], "delivery_confirmed", "تم تأكيد التسليم", "Delivery confirmed",
-                              "", "", {"trip_id": tid})
+                              "", "", {"trip_id": tid, "entity_type": "trip", "entity_id": tid})
+    return fresh
+
+
+@api.post("/trips/{tid}/dispute")
+async def dispute_trip(tid: str, body: DisputeCreate, user: dict = Depends(require_roles("customer"))):
+    """Phase 5A: customer disputes the delivery instead of confirming."""
+    t = await db.trips.find_one({"id": tid})
+    if not t or t["customer_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if t.get("status") != "DELIVERED_PENDING_CONFIRMATION":
+        raise HTTPException(status_code=400, detail="Trip is not in a disputable state")
+    if not (body.reason or "").strip():
+        raise HTTPException(status_code=400, detail="DISPUTE_REASON_REQUIRED")
+    claimed = await db.trips.update_one(
+        {"id": tid, "status": "DELIVERED_PENDING_CONFIRMATION"},
+        {"$set": {
+            "status": "DISPUTED",
+            "dispute": {
+                "reason": body.reason, "notes": body.notes or "",
+                "opened_by_id": user["id"], "opened_by_name": user.get("name", ""),
+                "opened_at": now_iso(),
+            },
+            "updated_at": now_iso(),
+        }},
+    )
+    if claimed.modified_count != 1:
+        raise HTTPException(status_code=409, detail="Trip state changed")
+    await db.shipments.update_one({"id": t["shipment_id"]}, {"$set": {"status": "DISPUTED", "updated_at": now_iso()}})
+    await db.audit_logs.insert_one({
+        "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
+        "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": "customer",
+        "action": "TRIP_DISPUTED", "entity": "trip", "entity_id": tid,
+        "old_value": {"status": "DELIVERED_PENDING_CONFIRMATION"},
+        "new_value": {"status": "DISPUTED", "reason": body.reason},
+        "reason": body.reason, "result": "success", "timestamp": now_iso(),
+    })
+    await create_notification(t["driver_id"], "trip_disputed", "تم فتح نزاع على الرحلة", "Trip disputed",
+                              body.reason, body.reason,
+                              {"trip_id": tid, "entity_type": "trip", "entity_id": tid})
+    # Notify admins
+    admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(100)
+    for a in admins:
+        await create_notification(a["id"], "trip_disputed", "نزاع جديد", "New dispute",
+                                  body.reason, body.reason,
+                                  {"trip_id": tid, "entity_type": "trip", "entity_id": tid})
     return await db.trips.find_one({"id": tid}, {"_id": 0})
 
 
@@ -506,7 +658,8 @@ async def review_trip(tid: str, body: ReviewCreate, user: dict = Depends(require
         raise HTTPException(status_code=404, detail="Trip not found")
     if t.get("review_id"):
         raise HTTPException(status_code=409, detail="Trip already reviewed")
-    if t.get("status") != "DELIVERED" or not t.get("customer_confirmed"):
+    # Phase 5A: accept both DELIVERED (legacy) and COMPLETED (current flow)
+    if t.get("status") not in ("DELIVERED", "COMPLETED") or not t.get("customer_confirmed"):
         raise HTTPException(status_code=400, detail="Delivery not confirmed yet")
     review = {
         "id": uid(), "trip_id": tid, "shipment_id": t["shipment_id"], "customer_id": user["id"],
@@ -515,7 +668,8 @@ async def review_trip(tid: str, body: ReviewCreate, user: dict = Depends(require
         "created_at": now_iso(),
     }
     claimed = await db.trips.update_one(
-        {"id": tid, "customer_id": user["id"], "status": "DELIVERED", "customer_confirmed": True, "review_id": {"$exists": False}},
+        {"id": tid, "customer_id": user["id"], "status": {"$in": ["DELIVERED", "COMPLETED"]},
+         "customer_confirmed": True, "review_id": {"$exists": False}},
         {"$set": {"status": "COMPLETED", "review_id": review["id"], "updated_at": now_iso()}},
     )
     if claimed.modified_count != 1:

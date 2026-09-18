@@ -593,8 +593,13 @@ class ReverseBody(BaseModel):
 async def get_settings():
     s = await db.settings.find_one({"id": "platform"})
     if not s:
-        s = {"id": "platform", "commission_type": "percentage", "commission_value": 10, "currency": "OMR"}
+        s = {"id": "platform", "commission_type": "percentage", "commission_value": 10,
+             "currency": "OMR", "auto_complete_hours": 48}
         await db.settings.insert_one(dict(s))
+    if "auto_complete_hours" not in s:
+        # Backward-compat: older settings docs get the default lazily.
+        await db.settings.update_one({"id": "platform"}, {"$set": {"auto_complete_hours": 48}})
+        s["auto_complete_hours"] = 48
     s.pop("_id", None)
     return s
 

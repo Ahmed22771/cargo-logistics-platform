@@ -233,6 +233,27 @@ export const translations = {
         docsReview: "تدقيق الوثائق", usersSuspend: "إيقاف / تفعيل المستخدمين",
       },
     },
+    p5: {
+      pod: {
+        title: "إثبات التسليم", submitBtn: "تأكيد التسليم مع الإثبات",
+        pickPhoto: "التقط صورة الإثبات", pickHint: "صورة الشحنة عند التسليم",
+        notes: "ملاحظات (اختياري)", notesPh: "مثال: تم التسليم للسيد أحمد عند البوابة الرئيسية",
+        confirm: "إرسال الإثبات وإكمال التسليم", submitted: "تم إرسال إثبات التسليم",
+        photoRequired: "يجب إرفاق صورة إثبات التسليم", tooLarge: "حجم الصورة كبير جدًا (الحد الأقصى 4 ميجابايت)",
+        deliveredBy: "سلّم بواسطة",
+        hint: "التقط صورة واضحة للشحنة أو للمستلم كدليل على التسليم قبل تأكيد الحالة.",
+      },
+      confirm: { success: "تم تأكيد الاستلام وإكمال الرحلة" },
+      dispute: {
+        openBtn: "فتح نزاع بدل التأكيد", title: "فتح نزاع", confirm: "إرسال النزاع",
+        reason: "سبب النزاع", reasonPh: "مثال: الشحنة غير مطابقة، تلف واضح، نقص في الكمية...",
+        reasonRequired: "يجب إدخال سبب النزاع",
+        notes: "ملاحظات إضافية (اختياري)",
+        hint: "افتح نزاعًا إذا كانت هناك مشكلة في التسليم. سيتم إبلاغ السائق والإدارة.",
+        submitted: "تم فتح النزاع بنجاح",
+      },
+      autoCompletedNotice: "تم إكمال هذه الرحلة تلقائيًا لعدم تأكيدها خلال المهلة المسموحة.",
+    },
   },
   en: {
     common: {
@@ -465,6 +486,27 @@ export const translations = {
       perm: {
         docsReview: "Document Review", usersSuspend: "Suspend / activate users",
       },
+    },
+    p5: {
+      pod: {
+        title: "Proof of Delivery", submitBtn: "Confirm delivery with proof",
+        pickPhoto: "Capture proof photo", pickHint: "Photo of the shipment at delivery",
+        notes: "Notes (optional)", notesPh: "e.g. Delivered to Mr. Ahmed at the front gate",
+        confirm: "Submit proof and complete delivery", submitted: "Proof of delivery submitted",
+        photoRequired: "A proof-of-delivery photo is required", tooLarge: "Image too large (4 MB max)",
+        deliveredBy: "Delivered by",
+        hint: "Take a clear photo of the shipment or recipient as proof of delivery before confirming.",
+      },
+      confirm: { success: "Delivery confirmed and trip completed" },
+      dispute: {
+        openBtn: "Open a dispute instead", title: "Open dispute", confirm: "Submit dispute",
+        reason: "Dispute reason", reasonPh: "e.g. Mismatched cargo, visible damage, short delivery...",
+        reasonRequired: "A dispute reason is required",
+        notes: "Additional notes (optional)",
+        hint: "Open a dispute if there is a delivery issue. The driver and admin will be notified.",
+        submitted: "Dispute opened successfully",
+      },
+      autoCompletedNotice: "This trip was auto-completed because delivery was not confirmed within the allowed window.",
     },
   },
 };

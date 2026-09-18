@@ -79,10 +79,20 @@ class TripStatusUpdate(BaseModel):
     status: str
     lat: Optional[float] = None
     lng: Optional[float] = None
+    pod_photo: Optional[str] = None
+    pod_notes: Optional[str] = ""
 
 
 class DeliveryConfirm(BaseModel):
     reference: Optional[str] = ""
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    delivered_to_name: Optional[str] = ""
+
+
+class DisputeCreate(BaseModel):
+    reason: str
+    notes: Optional[str] = ""
 
 
 class ReviewCreate(BaseModel):

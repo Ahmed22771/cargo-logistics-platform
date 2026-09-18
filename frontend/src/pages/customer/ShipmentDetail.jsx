@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Star, Truck, CheckCircle2, Package, Info, Trash2 } from "lucide-react";
+import { ArrowLeft, Star, Truck, CheckCircle2, Package, Info, Trash2, ShieldAlert, X, ShieldCheck } from "lucide-react";
 import { Card, Btn, Spinner, Field, Textarea, Input } from "../../components/ui-kit";
 import { StatusBadge, VerificationBadge } from "../../components/StatusBadge";
 import { RouteDisplay } from "../../components/RouteDisplay";
@@ -23,6 +23,21 @@ function Stars({ value, onChange, testId }) {
   );
 }
 
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-2xl w-full max-w-md p-6" data-testid="dispute-modal">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="font-bold text-lg text-[#16233A]">{title}</h2>
+          <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function ShipmentDetail() {
   const { id } = useParams();
   const { t, isRTL } = useI18n();
@@ -32,6 +47,7 @@ export default function ShipmentDetail() {
   const [trip, setTrip] = useState(null);
   const [busy, setBusy] = useState(false);
   const [rating, setRating] = useState({ overall: 5, service_quality: 5, communication: 5, on_time: 5, comment: "" });
+  const [dispute, setDispute] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -54,8 +70,20 @@ export default function ShipmentDetail() {
   };
   const confirmDelivery = async () => {
     setBusy(true);
-    try { await api.post(`/trips/${trip.id}/confirm-delivery`, { reference: "" }); toast.success(t("common.success")); await load(); }
+    try { await api.post(`/trips/${trip.id}/confirm-delivery`, { reference: "" }); toast.success(t("p5.confirm.success")); await load(); }
     catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
+  };
+  const submitDispute = async () => {
+    if (!dispute?.reason?.trim()) { toast.error(t("p5.dispute.reasonRequired")); return; }
+    setBusy(true);
+    try {
+      await api.post(`/trips/${trip.id}/dispute`, { reason: dispute.reason, notes: dispute.notes || "" });
+      toast.success(t("p5.dispute.submitted"));
+      setDispute(null); await load();
+    } catch (e) {
+      const c = apiErr(e);
+      toast.error(c === "DISPUTE_REASON_REQUIRED" ? t("p5.dispute.reasonRequired") : c);
+    } finally { setBusy(false); }
   };
   const submitRating = async () => {
     setBusy(true);
@@ -72,7 +100,8 @@ export default function ShipmentDetail() {
   const showBids = ["PUBLISHED", "BIDDING"].includes(shipment.status);
   const showTrip = !!trip;
   const canConfirm = trip && trip.status === "DELIVERED_PENDING_CONFIRMATION";
-  const canRate = trip && trip.customer_confirmed && trip.status !== "COMPLETED";
+  const canRate = trip && trip.customer_confirmed && !trip.review_id && (trip.status === "DELIVERED" || trip.status === "COMPLETED");
+  const pod = trip?.delivery_proof;
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -98,7 +127,6 @@ export default function ShipmentDetail() {
         )}
       </Card>
 
-      {/* Bids */}
       {showBids && (
         <Card className="mb-4">
           <h2 className="font-bold text-lg text-[#16233A] mb-4 flex items-center gap-2"><Package className="w-5 h-5 text-[#F1701E]" /> {t("bid.compare")} ({bids.length})</h2>
@@ -138,7 +166,6 @@ export default function ShipmentDetail() {
         </Card>
       )}
 
-      {/* Trip tracking */}
       {showTrip && (
         <Card className="mb-4">
           <h2 className="font-bold text-lg text-[#16233A] mb-1 flex items-center gap-2"><Truck className="w-5 h-5 text-[#F1701E]" /> {t("trip.tracking")}</h2>
@@ -153,11 +180,44 @@ export default function ShipmentDetail() {
               </div>
             ))}
           </div>
-          {canConfirm && <Btn variant="accent" onClick={confirmDelivery} disabled={busy} data-testid="confirm-delivery-btn" className="w-full mt-5"><CheckCircle2 className="w-4 h-4" /> {t("shipment.confirmDeliveryBtn")}</Btn>}
+
+          {pod?.photo && (
+            <div className="mt-5 border border-slate-200 rounded-xl p-4 bg-slate-50" data-testid="pod-panel">
+              <h3 className="font-bold text-sm text-[#16233A] mb-2 flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-emerald-600" /> {t("p5.pod.title")}</h3>
+              <img src={pod.photo} alt="Proof of Delivery" className="max-h-56 rounded-lg mb-2 mx-auto" />
+              {pod.notes && <p className="text-sm text-slate-600">{pod.notes}</p>}
+              <p className="text-xs text-slate-400 mt-1">{t("p5.pod.deliveredBy")}: {pod.delivered_by_name || "\u2014"} · {pod.at ? new Date(pod.at).toLocaleString(isRTL ? "ar-OM" : "en-GB") : ""}</p>
+            </div>
+          )}
+
+          {canConfirm && (
+            <div className="mt-5 space-y-2">
+              <Btn variant="accent" onClick={confirmDelivery} disabled={busy} data-testid="confirm-delivery-btn" className="w-full">
+                <CheckCircle2 className="w-4 h-4" /> {t("shipment.confirmDeliveryBtn")}
+              </Btn>
+              <Btn variant="ghost" onClick={() => setDispute({ reason: "", notes: "" })} disabled={busy} data-testid="open-dispute-btn"
+                className="w-full text-red-600 hover:bg-red-50 border border-red-200">
+                <ShieldAlert className="w-4 h-4" /> {t("p5.dispute.openBtn")}
+              </Btn>
+            </div>
+          )}
+
+          {trip.status === "DISPUTED" && trip.dispute && (
+            <div className="mt-5 border border-red-200 rounded-xl p-4 bg-red-50" data-testid="dispute-panel">
+              <div className="flex items-center gap-2 text-red-700 font-semibold mb-1"><ShieldAlert className="w-4 h-4" /> {t("status.DISPUTED")}</div>
+              <p className="text-sm text-red-600">{trip.dispute.reason}</p>
+              {trip.dispute.notes && <p className="text-xs text-slate-500 mt-1">{trip.dispute.notes}</p>}
+            </div>
+          )}
+
+          {trip.auto_completed && (
+            <div className="mt-4 text-xs text-slate-500 bg-slate-50 rounded-lg p-3 flex items-center gap-2">
+              <Info className="w-4 h-4" /> {t("p5.autoCompletedNotice")}
+            </div>
+          )}
         </Card>
       )}
 
-      {/* Rating */}
       {canRate && (
         <Card>
           <h2 className="font-bold text-lg text-[#16233A] mb-4 flex items-center gap-2"><Star className="w-5 h-5 text-[#F1701E]" /> {t("shipment.rateDriver")}</h2>
@@ -171,8 +231,30 @@ export default function ShipmentDetail() {
         </Card>
       )}
 
-      {trip && trip.status === "COMPLETED" && (
+      {trip && trip.status === "COMPLETED" && !canRate && (
         <Card><div className="flex items-center gap-2 text-emerald-600 font-semibold"><CheckCircle2 className="w-5 h-5" /> {t("status.COMPLETED")}</div></Card>
+      )}
+
+      {dispute && (
+        <Modal title={t("p5.dispute.title")} onClose={() => setDispute(null)}>
+          <div className="space-y-4">
+            <p className="text-sm text-slate-500">{t("p5.dispute.hint")}</p>
+            <Field label={t("p5.dispute.reason")} required>
+              <Textarea rows={2} data-testid="dispute-reason" placeholder={t("p5.dispute.reasonPh")}
+                value={dispute.reason} onChange={(e) => setDispute({ ...dispute, reason: e.target.value })} />
+            </Field>
+            <Field label={t("p5.dispute.notes")}>
+              <Input data-testid="dispute-notes" value={dispute.notes}
+                onChange={(e) => setDispute({ ...dispute, notes: e.target.value })} />
+            </Field>
+            <div className="flex gap-2">
+              <Btn variant="secondary" onClick={() => setDispute(null)} className="flex-1">{t("common.cancel")}</Btn>
+              <Btn variant="danger" onClick={submitDispute} disabled={busy} data-testid="dispute-submit" className="flex-1">
+                <ShieldAlert className="w-4 h-4" /> {t("p5.dispute.confirm")}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

@@ -1,0 +1,57 @@
+{
+  "summary": "Iteration 3 — Payment demo hold + PoD notification + MyShipments action banner + Bid modal centering. Backend: created /app/backend/tests/test_payment_flow.py (10 tests, 9 pass, 1 skip — see notes). All backend contracts verified: POST /api/trips/{tid}/pay is idempotent (only 1 payment_hold txn ever created, verified directly via MongoDB across 5 recent HELD trips), sets payment_status=HELD + payment_id + paid_at, returns 404 for wrong customer, 401/403 for driver/unauthed, 400 TRIP_IN_TERMINAL_STATE after COMPLETED. Driver /trips/{tid}/status returns 400 PAYMENT_REQUIRED when payment_status != HELD, and succeeds after payment. pod_pending notification with meta.trip_id + meta.shipment_id + correct AR/EN titles observed on transition to DELIVERED_PENDING_CONFIRMATION. record_trip_completion() unchanged: at confirm-delivery, exactly 3 ledger txns (customer_payment, platform_commission, driver_earning) are added to the existing single payment_hold, verified in MongoDB. Second confirm-delivery returns 400. Frontend: end-to-end customer golden path works: accept-bid navigates to /customer/pay/{tid}; PaymentScreen renders all required testids (pay-card, pay-shipment-ref '#{sid8}', pay-driver-name, pay-amount '199.500 OMR', pay-demo-badge, pay-now-btn, pay-cancel-btn) with NO amount input; pay-now-btn double-click creates only ONE payment_hold (backend idempotent); post-pay redirects to /customer/shipment/{sid} and trip-payment-held banner shows; refresh /customer/pay/{tid} shows pay-held-badge + pay-go-detail-btn and no pay-now-btn. Unpaid DRIVER_ASSIGNED shows trip-payment-required + trip-complete-payment-btn. MyShipments action-required-card shows: 2 action-pod-{sid} rows w/ review-pod-btn-{sid} (multi-shipment scenario) + action-pay-{sid} + complete-payment-btn-{sid}. confirm-delivery-btn works; submit-rating-btn appears; server-side duplicate confirm returns 400. RTL toggle switches dir=rtl on PaymentScreen, no horizontal overflow on pay screen at 390x844 in AR or EN. BUGS FOUND (see below): (1) horizontal overflow on mobile 390x844 at /customer/shipments and /customer/shipment/{id}; (2) CRITICAL: Driver BidModal on BOTH mobile 390x844 AND desktop 1920x1080 — submit-bid-btn IS NOT in the viewport (mobile: submit y=1491 vs vh=844; desktop: submit y~2000+ vs vh=1080) even though class contains items-center. Root cause identified below.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "BidModal (AvailableShipments.jsx)",
+        "issue": "Modal size ignores max-h-[85vh]; submit-bid-btn rendered OUTSIDE viewport on both mobile (submit y=1491, vh=844) and desktop (modal height=2623, vh=1080). Modal getComputedStyle shows position:fixed, top:0px, but getBoundingClientRect returns y=61, height=2623 — meaning fixed positioning is being contained inside <main>, not the viewport. Screenshots confirm the modal card is scrolled below the viewport; only the dimmed overlay is visible.",
+        "selector": "[data-testid=submit-bid-btn]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "MyShipments (customer)",
+        "issue": "Horizontal overflow at 390x844 (document.scrollWidth > innerWidth). Confirmed via evaluate().",
+        "selector": "/customer/shipments",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "ShipmentDetail (customer)",
+        "issue": "Horizontal overflow at 390x844.",
+        "selector": "/customer/shipment/{id}",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "rca of the issue": "PortalLayout.jsx line 126 sets <main className='... animate-fade-in'>. The animate-fade-in keyframe (index.css line 73-79) uses `transform: translateY(...)` with `animation-fill-mode: both`, so translateY(0) stays applied on <main> permanently after animation completes. Per CSS spec, when an ancestor has a `transform`, that ancestor becomes the containing block for `position: fixed` descendants. So the BidModal's `fixed inset-0` is sized to <main>'s content height (~2623px on driver/available) instead of the viewport (844px). The `flex items-center` then centers the inner card vertically inside that 2623px container → the card ends up around y=1200, way below the visible 0–844 viewport. The customer PaymentScreen is a plain (non-modal) page so it's not affected. FIX: (a) change animate-fade-in keyframe to opacity-only (remove translateY) OR (b) remove animate-fade-in from <main> in PortalLayout.jsx (keep it only on inner cards) OR (c) render BidModal via React portal to document.body (createPortal). Recommend (b) or (c).",
+  "test_report_links": [
+    "/app/backend/tests/test_payment_flow.py",
+    "/app/test_reports/pytest/payment_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Fix BidModal not confined to viewport. Simplest fix — remove `animate-fade-in` from <main> in /app/frontend/src/components/PortalLayout.jsx (line 126), OR change the keyframe in /app/frontend/src/index.css to opacity-only (drop `transform: translateY`). This will restore position:fixed to viewport-bound. Re-verify submit-bid-btn is visible on both 390x844 and 1920x1080.",
+    "Fix horizontal overflow at /customer/shipments and /customer/shipment/{id} on mobile 390x844 (likely a long address/id/number in ShipmentCard or the action-required-card badge label — inspect and wrap with min-w-0 + truncate)."
+  ],
+  "critical_code_review_comments": [
+    "Missing admin transactions listing endpoint (/api/admin/transactions returns 404) — the frontend has no way to verify ledger for support/audit purposes. Consider exposing to admin.",
+    "record_trip_completion() idempotency depends on a driver_earning existence check; if the platform_commission txn insert fails after customer_payment, the ledger will be left partially written with no rollback (not tested here). Consider a session-based transaction.",
+    "PaymentScreen 'demo_code' still exposed via [data-testid=demo-otp-hint] on Login — must be gated behind dev flag before production.",
+    "BidModal uses non-portalled `fixed` div — brittle against ancestor transforms (which is exactly what's broken here). Consider React portal for all modals."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_payment_flow.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (9/9 executed pytest, 1 skipped by design — INVALID_TRIP_PRICE cannot be provoked via public API since bids > 0 is enforced upstream; guard exists in code and inspected manually)",
+    "frontend": "88% — 15/17 verified. 2 bugs: BidModal off-screen on both viewports (critical), horizontal overflow on 2 mobile screens (medium)."
+  },
+  "test_credentials": "Admin: admin@cargo.om / admin123 (VERIFIED). Customer OTP: +96890000001. Driver OTP: +96890000002. Demo OTPs are read at runtime from [data-testid=demo-otp-hint] or /api/auth/otp/request response.demo_code.",
+  "seed_data_creation": "Multiple TEST_* / UI_* shipments and trips created during testing; some completed (ledger written), some left in DRIVER_ASSIGNED (payment required), some in DELIVERED_PENDING_CONFIRMATION (POD pending) — used to verify multi-shipment action banner. Not cleaned.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All backend contracts for demo payment verified in-DB and via /pay endpoint (idempotency proven at row-level in MongoDB). Frontend customer golden path is functionally correct; the only real regressions are (1) BidModal off-screen on both viewports due to <main class='animate-fade-in'> creating a transform-containing-block that swallows the modal's position:fixed, and (2) small horizontal overflow on /customer/shipments and /customer/shipment/{id} at 390x844. Both are UI-layer, no backend changes needed. Retest steps after fix: (i) driver login → /driver/available → click Submit Bid → verify submit-bid-btn is inside viewport at 390x844 and 1920x1080; (ii) customer login → /customer/shipments → check document.scrollWidth <= innerWidth at 390x844.",
+  "notes": "Pytest must be run with `-n 0` because pytest-xdist parallel workers consumed each other's single-use OTP codes. Ran: `REACT_APP_BACKEND_URL=<url> pytest backend/tests/test_payment_flow.py -n 0`."
+}

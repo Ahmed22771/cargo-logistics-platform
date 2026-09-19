@@ -123,7 +123,7 @@ export function PortalLayout({ navItems, basePath, title, children }) {
           </div>
         </header>
 
-        <main className="flex-1 p-4 md:p-6 pb-24 lg:pb-6 max-w-6xl w-full mx-auto animate-fade-in">{children}</main>
+        <main className="flex-1 p-4 md:p-6 pb-24 lg:pb-6 max-w-6xl w-full mx-auto">{children}</main>
 
         {/* Mobile bottom nav */}
         <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200 flex" data-testid="mobile-bottom-nav">

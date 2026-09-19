@@ -233,6 +233,11 @@ export const translations = {
         docsReview: "تدقيق الوثائق", usersSuspend: "إيقاف / تفعيل المستخدمين",
       },
     },
+    provider: {
+      companyName: "اسم الشركة", address: "العنوان", email: "البريد الإلكتروني", phone: "رقم الهاتف", crNumber: "السجل التجاري",
+      shipments: "الشحنات", bids: "عروضي", transactions: "معاملاتي", noBids: "لا توجد عروض حالياً", noTransactions: "لا توجد معاملات حالياً",
+      bidStatus: "حالة العرض", amount: "المبلغ", date: "التاريخ",
+    },
     p5: {
       pod: {
         title: "إثبات التسليم", submitBtn: "تأكيد التسليم مع الإثبات",
@@ -486,6 +491,11 @@ export const translations = {
       perm: {
         docsReview: "Document Review", usersSuspend: "Suspend / activate users",
       },
+    },
+    provider: {
+      companyName: "Company name", address: "Address", email: "Email", phone: "Phone number", crNumber: "Commercial registration",
+      shipments: "Shipments", bids: "My bids", transactions: "My transactions", noBids: "No bids yet", noTransactions: "No transactions yet",
+      bidStatus: "Bid status", amount: "Amount", date: "Date",
     },
     p5: {
       pod: {

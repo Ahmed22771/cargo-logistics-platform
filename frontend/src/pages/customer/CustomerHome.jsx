@@ -27,16 +27,16 @@ export default function CustomerHome() {
   ];
 
   return (
-    <div>
+    <div className="min-w-0 overflow-x-hidden">
       <PageHeader title={`${t("common.welcome")} ${user?.name} 👋`} subtitle={t("landing.customerCardDesc")}
         action={<Btn variant="accent" data-testid="home-create-shipment-btn" onClick={() => navigate("/customer/create")}><Plus className="w-4 h-4" /> {t("shipment.create")}</Btn>} />
 
-      <div className="grid grid-cols-3 gap-3 md:gap-5 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-5 mb-8 min-w-0">
         {stats.map((s, i) => (
-          <Card key={i} className="!p-4 md:!p-5">
+          <Card key={i} className="!p-4 md:!p-5 min-w-0 overflow-hidden">
             <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${s.color}`}><s.icon className="w-5 h-5" /></div>
             <div className="text-2xl md:text-3xl font-extrabold text-[#16233A]">{s.value}</div>
-            <div className="text-xs md:text-sm text-slate-500 mt-1">{s.label}</div>
+            <div className="text-xs md:text-sm text-slate-500 mt-1 truncate">{s.label}</div>
           </Card>
         ))}
       </div>

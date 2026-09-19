@@ -721,6 +721,22 @@ async def provider_summary(user: dict = Depends(require_roles("provider"))):
             "company_name": user.get("company_name", ""), "service_areas": user.get("service_areas", [])}
 
 
+@api.get("/provider/bids")
+async def provider_bids(user: dict = Depends(require_roles("provider"))):
+    bids = await db.bids.find({"provider_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    for bid in bids:
+        bid["shipment"] = await db.shipments.find_one({"id": bid.get("shipment_id")}, {"_id": 0})
+    return bids
+
+
+@api.get("/provider/transactions")
+async def provider_transactions(user: dict = Depends(require_roles("provider"))):
+    return await db.transactions.find(
+        {"account_id": user["id"], "account_role": "provider"}, {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+
+
+
 # ================= ADMIN =================
 @api.get("/admin/stats")
 async def admin_stats(user: dict = Depends(require_roles("admin"))):

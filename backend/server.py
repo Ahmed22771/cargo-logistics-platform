@@ -426,6 +426,66 @@ async def accept_bid(bid_id: str, user: dict = Depends(require_roles("customer")
     return clean(dict(trip))
 
 
+# ================= DEMO PAYMENT =================
+@api.post("/trips/{tid}/pay")
+async def pay_trip(tid: str, user: dict = Depends(require_roles("customer"))):
+    """Demo payment. Idempotent: if the trip is already HELD, returns the current state
+    without creating another transaction. Records a single payment_hold row in the
+    existing db.transactions collection (NO new ledger). record_trip_completion() is
+    untouched and continues to run at delivery-confirmation time to settle the trip."""
+    t = await db.trips.find_one({"id": tid}, {"_id": 0})
+    if not t or t["customer_id"] != user["id"]:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if t.get("status") in TERMINAL_STATES:
+        raise HTTPException(status_code=400, detail="TRIP_IN_TERMINAL_STATE")
+    if (t.get("payment_status") or "NONE") == "HELD":
+        # already paid — idempotent no-op
+        return {"trip": t, "already_paid": True}
+
+    amount = float(t.get("price", 0) or 0)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="INVALID_TRIP_PRICE")
+
+    # Atomic claim: only one concurrent request wins the transition NONE -> HELD.
+    payment_id = uid()
+    now = now_iso()
+    claimed = await db.trips.find_one_and_update(
+        {"id": tid, "$or": [{"payment_status": {"$exists": False}}, {"payment_status": {"$ne": "HELD"}}]},
+        {"$set": {"payment_status": "HELD", "payment_id": payment_id, "paid_at": now, "updated_at": now}},
+        return_document=ReturnDocument.AFTER,
+    )
+    if not claimed:
+        # Lost the race: another request already flipped it to HELD.
+        fresh = await db.trips.find_one({"id": tid}, {"_id": 0})
+        return {"trip": fresh, "already_paid": True}
+
+    # Fetch platform settings (currency) — do NOT create driver_earning or platform_commission here;
+    # those remain the exclusive responsibility of record_trip_completion() at completion time.
+    from extra import get_settings
+    settings = await get_settings()
+    txn = {
+        "id": payment_id, "type": "payment_hold",
+        "account_id": t["customer_id"], "account_role": "customer",
+        "shipment_id": t.get("shipment_id"), "trip_id": tid,
+        "amount": amount, "gross": amount, "commission": 0, "net": amount,
+        "currency": settings["currency"], "status": "HELD",
+        "description": f"Payment held for {t.get('shipment_title','')}",
+        "created_by": user.get("name"), "created_by_id": user["id"],
+        "created_at": now,
+    }
+    await db.transactions.insert_one(txn)
+    await db.audit_logs.insert_one({
+        "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
+        "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": "customer",
+        "action": "TRIP_PAYMENT_HELD", "entity": "trip", "entity_id": tid,
+        "old_value": {"payment_status": t.get("payment_status") or "NONE"},
+        "new_value": {"payment_status": "HELD", "amount": amount, "payment_id": payment_id},
+        "reason": "", "result": "success", "timestamp": now,
+    })
+    fresh = await db.trips.find_one({"id": tid}, {"_id": 0})
+    return {"trip": fresh, "already_paid": False}
+
+
 # ================= TRIPS =================
 TRIP_FLOW = [
     "DRIVER_ASSIGNED", "DRIVER_EN_ROUTE", "DRIVER_ARRIVED", "LOADING", "LOADED",
@@ -532,6 +592,12 @@ async def update_trip_status(tid: str, body: TripStatusUpdate, user: dict = Depe
     if not has_next_state or body.status != TRIP_FLOW[current_index + 1]:
         raise HTTPException(status_code=400, detail="INVALID_TRIP_TRANSITION")
 
+    # Payment gate: driver cannot advance the trip beyond DRIVER_ASSIGNED until the
+    # customer has paid (demo payment_status == HELD). This is the only backend
+    # change that couples payment to the trip state machine.
+    if t.get("status") == "DRIVER_ASSIGNED" and (t.get("payment_status") or "NONE") != "HELD":
+        raise HTTPException(status_code=400, detail="PAYMENT_REQUIRED")
+
     # Phase 5A: Proof of Delivery is REQUIRED to reach DELIVERED_PENDING_CONFIRMATION
     updates = {"status": body.status, "updated_at": now_iso()}
     if body.status == "DELIVERED_PENDING_CONFIRMATION":
@@ -558,9 +624,20 @@ async def update_trip_status(tid: str, body: TripStatusUpdate, user: dict = Depe
     event = {"id": uid(), "status": body.status, "lat": body.lat, "lng": body.lng, "timestamp": now_iso()}
     await db.trips.update_one({"id": tid}, {"$set": updates, "$push": {"tracking_events": event}})
     await db.shipments.update_one({"id": t["shipment_id"]}, {"$set": {"status": body.status, "updated_at": now_iso()}})
-    await create_notification(t["customer_id"], "trip_update", "تحديث حالة الرحلة", "Trip status updated",
-                              "", "", {"trip_id": tid, "shipment_id": t["shipment_id"], "status": body.status,
-                                       "entity_type": "trip", "entity_id": tid})
+    if body.status == "DELIVERED_PENDING_CONFIRMATION":
+        # Distinct, action-required notification — clearer than the generic trip_update.
+        await create_notification(
+            t["customer_id"], "pod_pending",
+            "إثبات تسليم بانتظار تأكيدك", "Proof of delivery awaits your confirmation",
+            "تم إرسال إثبات التسليم. يرجى مراجعة الشحنة وتأكيد استلامها.",
+            "Proof of delivery has been submitted. Please review and confirm receipt.",
+            {"trip_id": tid, "shipment_id": t["shipment_id"], "status": body.status,
+             "entity_type": "trip", "entity_id": tid},
+        )
+    else:
+        await create_notification(t["customer_id"], "trip_update", "تحديث حالة الرحلة", "Trip status updated",
+                                  "", "", {"trip_id": tid, "shipment_id": t["shipment_id"], "status": body.status,
+                                           "entity_type": "trip", "entity_id": tid})
     return await db.trips.find_one({"id": tid}, {"_id": 0})
 
 

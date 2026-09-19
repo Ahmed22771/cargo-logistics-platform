@@ -15,6 +15,7 @@ function BidModal({ shipment, onClose, onSubmitted }) {
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const submit = async () => {
+    if (busy) return; // prevent double-submit
     const p = parseFloat(price);
     if (!p || p <= 0) { toast.error(t("bid.priceRequired")); return; }
     setBusy(true);
@@ -22,20 +23,24 @@ function BidModal({ shipment, onClose, onSubmitted }) {
     catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" data-testid="bid-modal">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-6 animate-fade-in">
-        <h2 className="font-bold text-lg text-[#16233A] mb-1">{t("bid.submit")}</h2>
-        <p className="text-sm text-slate-400 mb-4">{shipment.title}</p>
-        <div className="space-y-4">
-          <Field label={t("bid.price")} required hint={t("bid.enterPrice")}>
-            <Input type="number" data-testid="bid-price-input" value={price} onChange={(e) => setPrice(e.target.value)} className="force-ltr" placeholder="0.000" />
-          </Field>
-          <Field label={t("bid.note")}><Textarea rows={2} data-testid="bid-note-input" value={note} onChange={(e) => setNote(e.target.value)} /></Field>
-          <div className="flex gap-2">
-            <Btn variant="secondary" onClick={onClose} className="flex-1">{t("common.cancel")}</Btn>
-            <Btn variant="accent" onClick={submit} disabled={busy} data-testid="submit-bid-btn" className="flex-1"><Gavel className="w-4 h-4" /> {t("bid.submit")}</Btn>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="bid-modal">
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} data-testid="bid-modal-overlay" />
+      <div className="relative bg-white w-full max-w-md rounded-2xl shadow-xl max-h-[85vh] flex flex-col animate-fade-in">
+        <div className="p-6 pb-3 shrink-0">
+          <h2 className="font-bold text-lg text-[#16233A] mb-1">{t("bid.submit")}</h2>
+          <p className="text-sm text-slate-400 line-clamp-2">{shipment.title}</p>
+        </div>
+        <div className="px-6 overflow-y-auto flex-1">
+          <div className="space-y-4">
+            <Field label={t("bid.price")} required hint={t("bid.enterPrice")}>
+              <Input type="number" data-testid="bid-price-input" value={price} onChange={(e) => setPrice(e.target.value)} className="force-ltr" placeholder="0.000" />
+            </Field>
+            <Field label={t("bid.note")}><Textarea rows={2} data-testid="bid-note-input" value={note} onChange={(e) => setNote(e.target.value)} /></Field>
           </div>
+        </div>
+        <div className="p-6 pt-3 shrink-0 border-t border-slate-100 flex gap-2">
+          <Btn variant="secondary" onClick={onClose} disabled={busy} data-testid="cancel-bid-btn" className="flex-1 justify-center">{t("common.cancel")}</Btn>
+          <Btn variant="accent" onClick={submit} disabled={busy} data-testid="submit-bid-btn" className="flex-1 justify-center"><Gavel className="w-4 h-4" /> {t("bid.submit")}</Btn>
         </div>
       </div>
     </div>

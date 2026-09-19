@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Star, Truck, CheckCircle2, Package, Info, Trash2, ShieldAlert, X, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Star, Truck, CheckCircle2, Package, Info, Trash2, ShieldAlert, X, ShieldCheck, CreditCard, Lock } from "lucide-react";
 import { Card, Btn, Spinner, Field, Textarea, Input } from "../../components/ui-kit";
 import { StatusBadge, VerificationBadge } from "../../components/StatusBadge";
 import { RouteDisplay } from "../../components/RouteDisplay";
@@ -65,8 +65,16 @@ export default function ShipmentDetail() {
 
   const acceptBid = async (bid) => {
     setBusy(true);
-    try { await api.post(`/bids/${bid.id}/accept`); toast.success(t("bid.accepted")); await load(); }
-    catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
+    try {
+      const { data: newTrip } = await api.post(`/bids/${bid.id}/accept`);
+      toast.success(t("bid.accepted"));
+      // Route the customer straight to the payment confirmation screen (Demo pay).
+      if (newTrip?.id) {
+        navigate(`/customer/pay/${newTrip.id}`);
+        return;
+      }
+      await load();
+    } catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
   };
   const confirmDelivery = async () => {
     setBusy(true);
@@ -170,6 +178,38 @@ export default function ShipmentDetail() {
         <Card className="mb-4">
           <h2 className="font-bold text-lg text-[#16233A] mb-1 flex items-center gap-2"><Truck className="w-5 h-5 text-[#F1701E]" /> {t("trip.tracking")}</h2>
           <p className="text-sm text-slate-400 mb-4">{t("bid.driver")}: <span className="font-semibold text-slate-600">{trip.driver_name}</span></p>
+
+          {trip.payment_status === "HELD" && (
+            <div
+              className="mb-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700 font-semibold"
+              data-testid="trip-payment-held"
+            >
+              <Lock className="w-4 h-4 shrink-0" />
+              <span>{t("pay.held")} · {Number(trip.price || 0).toFixed(3)} {t("common.currency")}</span>
+            </div>
+          )}
+          {trip.payment_status !== "HELD" && trip.status === "DRIVER_ASSIGNED" && (
+            <div
+              className="mb-4 flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"
+              data-testid="trip-payment-required"
+            >
+              <div className="flex items-start gap-2 flex-1">
+                <CreditCard className="w-4 h-4 shrink-0 text-amber-700 mt-0.5" />
+                <div>
+                  <div className="font-semibold text-amber-800">{t("pay.awaitingPayment")}</div>
+                  <div className="text-xs text-amber-700 mt-0.5">{Number(trip.price || 0).toFixed(3)} {t("common.currency")}</div>
+                </div>
+              </div>
+              <Btn
+                variant="accent"
+                onClick={() => navigate(`/customer/pay/${trip.id}`)}
+                data-testid="trip-complete-payment-btn"
+                className="whitespace-nowrap"
+              >
+                <CreditCard className="w-4 h-4" /> {t("pay.completePayment")}
+              </Btn>
+            </div>
+          )}
           <div className="space-y-1">
             {TRACK_STEPS.map((s, i) => (
               <div key={s} className="flex items-center gap-3" data-testid={`track-${s}`}>

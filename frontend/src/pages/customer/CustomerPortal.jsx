@@ -7,6 +7,7 @@ import MyShipments from "./MyShipments";
 import CreateShipment from "./CreateShipment";
 import ShipmentDetail from "./ShipmentDetail";
 import CustomerProfile from "./CustomerProfile";
+import PaymentScreen from "./PaymentScreen";
 
 const NAV = [
   { key: "home", to: "", label: "common.home", icon: Home },
@@ -23,6 +24,7 @@ export default function CustomerPortal() {
         <Route path="shipments" element={<MyShipments />} />
         <Route path="create" element={<CreateShipment />} />
         <Route path="shipment/:id" element={<ShipmentDetail />} />
+        <Route path="pay/:tripId" element={<PaymentScreen />} />
         <Route path="profile" element={<CustomerProfile />} />
         <Route path="*" element={<Navigate to="/customer" replace />} />
       </Routes>

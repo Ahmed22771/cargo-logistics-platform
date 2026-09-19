@@ -78,6 +78,10 @@ export const translations = {
       trackShipment: "تتبع الشحنة", confirmDeliveryBtn: "تأكيد استلام الشحنة",
       rateDriver: "قيّم السائق", vehiclePickup: "بيك أب", vehicleFlatbed: "شاحنة مسطحة",
       vehicleContainer: "شاحنة حاويات", vehicleRefrigerated: "شاحنة مبردة", vehicleTrailer: "مقطورة",
+      simpleTitle: "ماذا تريد أن تشحن؟", cargoPlaceholder: "مثال: أثاث مكتب و4 كراتين ملابس وثلاجة",
+      addPhotoOptional: "إضافة صورة (اختياري)", fromTitle: "من أين توجد الشحنة؟", toTitle: "إلى أين تريد شحنها؟",
+      pickupWhen: "متى تريد تحميل الشحنة؟", deliveryWhen: "متى تريد تسليم الشحنة؟", servicesTitle: "الخدمات الإضافية",
+      summary: "ملخص الشحنة", selectedServices: "الخدمات المختارة", noServices: "لا توجد خدمات إضافية",
     },
     bid: {
       submit: "تقديم عرض", price: "قيمة العرض", note: "ملاحظة (اختياري)", submitted: "تم تقديم عرضك بنجاح",
@@ -337,6 +341,10 @@ export const translations = {
       trackShipment: "Track shipment", confirmDeliveryBtn: "Confirm delivery received",
       rateDriver: "Rate driver", vehiclePickup: "Pickup", vehicleFlatbed: "Flatbed",
       vehicleContainer: "Container", vehicleRefrigerated: "Refrigerated", vehicleTrailer: "Trailer",
+      simpleTitle: "What do you want to ship?", cargoPlaceholder: "Example: Office furniture, 4 boxes of clothes, and a refrigerator",
+      addPhotoOptional: "Add a photo (optional)", fromTitle: "Where is the shipment?", toTitle: "Where do you want to ship it?",
+      pickupWhen: "When should we load the shipment?", deliveryWhen: "When should we deliver the shipment?", servicesTitle: "Additional services",
+      summary: "Shipment summary", selectedServices: "Selected services", noServices: "No additional services",
     },
     bid: {
       submit: "Submit Bid", price: "Bid amount", note: "Note (optional)", submitted: "Your bid was submitted",

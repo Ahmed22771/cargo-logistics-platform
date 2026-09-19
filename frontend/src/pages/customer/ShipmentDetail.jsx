@@ -112,15 +112,15 @@ export default function ShipmentDetail() {
   const pod = trip?.delivery_proof;
 
   return (
-    <div className="max-w-3xl mx-auto">
+    <div className="max-w-3xl mx-auto min-w-0">
       <button onClick={() => navigate("/customer/shipments")} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 mb-4" data-testid="detail-back-btn">
         <ArrowLeft className={`w-4 h-4 ${isRTL ? "" : "rotate-180"}`} /> {t("nav.myShipments")}
       </button>
 
-      <Card className="mb-4">
+      <Card className="mb-4 min-w-0 overflow-hidden">
         <div className="flex items-start justify-between gap-3 mb-4">
-          <div><h1 className="text-xl font-extrabold text-[#16233A]">{shipment.title}</h1>
-            <p className="text-sm text-slate-400 mt-1">{shipment.description}</p></div>
+          <div className="min-w-0 flex-1"><h1 className="text-xl font-extrabold text-[#16233A] truncate">{shipment.title}</h1>
+            <p className="text-sm text-slate-400 mt-1 break-words">{shipment.description}</p></div>
           <StatusBadge status={shipment.status} />
         </div>
         <StaticRouteMap pickup={shipment.pickup_location} delivery={shipment.delivery_location} height={220} />

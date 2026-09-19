@@ -51,7 +51,7 @@ export default function MyShipments() {
   const hasAction = pendingConfirm.length > 0 || needsPayment.length > 0;
 
   return (
-    <div>
+    <div className="min-w-0">
       <PageHeader title={t("nav.myShipments")}
         action={<Btn variant="accent" data-testid="create-shipment-btn" onClick={() => navigate("/customer/create")}><Plus className="w-4 h-4" /> {t("shipment.create")}</Btn>} />
 
@@ -71,12 +71,12 @@ export default function MyShipments() {
               <div
                 key={`pod-${s.id}`}
                 data-testid={`action-pod-${s.id}`}
-                className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl bg-white border border-orange-200 p-3"
+                className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl bg-white border border-orange-200 p-3 overflow-hidden"
               >
                 <div className="flex items-start gap-2 flex-1 min-w-0">
                   <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-                  <div className="min-w-0">
-                    <div className="font-semibold text-sm text-[#16233A]">{t("action.podPending")}</div>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-sm text-[#16233A] truncate">{t("action.podPending")}</div>
                     <div className="text-xs text-slate-500 truncate">{s.title}</div>
                   </div>
                 </div>
@@ -84,7 +84,7 @@ export default function MyShipments() {
                   variant="accent"
                   onClick={() => navigate(`/customer/shipment/${s.id}`)}
                   data-testid={`review-pod-btn-${s.id}`}
-                  className="whitespace-nowrap"
+                  className="shrink-0 w-full sm:w-auto"
                 >
                   {t("action.reviewPod")}
                 </Btn>
@@ -96,12 +96,12 @@ export default function MyShipments() {
                 <div
                   key={`pay-${s.id}`}
                   data-testid={`action-pay-${s.id}`}
-                  className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl bg-white border border-orange-200 p-3"
+                  className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl bg-white border border-orange-200 p-3 overflow-hidden"
                 >
                   <div className="flex items-start gap-2 flex-1 min-w-0">
                     <CreditCard className="w-5 h-5 text-[#F1701E] shrink-0 mt-0.5" />
-                    <div className="min-w-0">
-                      <div className="font-semibold text-sm text-[#16233A]">{t("action.needsPayment")}</div>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-sm text-[#16233A] truncate">{t("action.needsPayment")}</div>
                       <div className="text-xs text-slate-500 truncate">
                         {s.title} · {Number(tr.price || 0).toFixed(3)} {t("common.currency")}
                       </div>
@@ -111,7 +111,7 @@ export default function MyShipments() {
                     variant="accent"
                     onClick={() => navigate(`/customer/pay/${tr.id}`)}
                     data-testid={`complete-payment-btn-${s.id}`}
-                    className="whitespace-nowrap"
+                    className="shrink-0 w-full sm:w-auto"
                   >
                     {t("pay.completePayment")}
                   </Btn>
@@ -128,7 +128,7 @@ export default function MyShipments() {
       ) : (
         <div className="grid gap-3">
           {shipments.map((s) => (
-            <Card key={s.id} data-testid={`shipment-card-${s.id}`} className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/customer/shipment/${s.id}`)}>
+            <Card key={s.id} data-testid={`shipment-card-${s.id}`} className="cursor-pointer hover:shadow-md transition-shadow min-w-0 overflow-hidden" onClick={() => navigate(`/customer/shipment/${s.id}`)}>
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div className="min-w-0">
                   <h3 className="font-bold text-[#16233A] truncate">{s.title}</h3>

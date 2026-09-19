@@ -23,9 +23,20 @@ function BidModal({ shipment, onClose, onSubmitted }) {
     catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="bid-modal">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} data-testid="bid-modal-overlay" />
-      <div className="relative bg-white w-full max-w-md rounded-2xl shadow-xl max-h-[85vh] flex flex-col animate-fade-in">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      data-testid="bid-modal"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div
+        className="absolute inset-0 bg-black/50"
+        data-testid="bid-modal-overlay"
+        onClick={onClose}
+      />
+      <div
+        className="relative bg-white w-full max-w-md rounded-2xl shadow-xl max-h-[85vh] flex flex-col animate-fade-in"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="p-6 pb-3 shrink-0">
           <h2 className="font-bold text-lg text-[#16233A] mb-1">{t("bid.submit")}</h2>
           <p className="text-sm text-slate-400 line-clamp-2">{shipment.title}</p>

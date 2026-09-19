@@ -1,0 +1,43 @@
+{
+  "summary": "Retest of iteration_3 bugs after fix (removed animate-fade-in from <main> in PortalLayout.jsx line 126). CRITICAL BidModal bug is FIXED on both 390x844 (submit-bid-btn bottom=580.5, vh=844) and 1920x1080 (submit-bid-btn bottom=698.5, vh=1080). Modal is now viewport-bound (bbox 0,0,vw,vh) instead of trapped inside <main>. Cancel button closes modal, price/note inputs work, dispute-modal on ShipmentDetail also verified inside viewport on both mobile and desktop. Customer /customer/shipment/{id} horizontal overflow FIXED for PUBLISHED and DELIVERED_PENDING_CONFIRMATION states in AR. Regression golden path spot-check OK: DRIVER_ASSIGNED unpaid shipment still shows trip-payment-required banner. HOWEVER: 3 overflow issues remain — (1) MOBILE AR /customer/shipments still overflows 437>390 (47px); (2) MOBILE EN /customer/shipments overflows 491>390 (101px) — shipment-card element has width=475; (3) MOBILE AR /customer/shipment/{DRIVER_ASSIGNED} overflows 479>390 due to Leaflet map tiles (leaflet-tile img right=581). Also one MINOR UX regression: backdrop click on [data-testid=bid-modal-overlay] no longer closes the modal because the overlay is a sibling `absolute inset-0` beneath the card in the same flex container, and the card intercepts pointer events over the visible clickable region. Cancel button works, so functionality is present via keyboard/button only.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MyShipments (customer)", "issue": "Horizontal overflow at 390x844 in AR: scrollWidth=437 vs clientWidth=390 (47px overflow). Not fully fixed.", "selector": "/customer/shipments", "priority": "MEDIUM"},
+      {"component": "MyShipments (customer)", "issue": "Horizontal overflow at 390x844 in EN: scrollWidth=491 vs clientWidth=390 (101px overflow). Offender: [data-testid=shipment-card-*] rendered with width=475 (class 'bg-white border ... p-5 md:p-6'), and its children [data-testid=route-inline] (w=433), [data-testid=status-*] (right=470). Likely long English text/address forcing overflow; needs min-w-0 + truncate on flex children or word-break on route/title text.", "selector": "[data-testid^=shipment-card-]", "priority": "MEDIUM"},
+      {"component": "ShipmentDetail (customer) — DRIVER_ASSIGNED state", "issue": "Horizontal overflow at 390x844: scrollWidth=479 vs 390 (89px). Offenders are Leaflet map tiles (IMG.leaflet-tile right=581 w=256) and .leaflet-proxy (right=21736). The Leaflet map container is not being constrained to its parent width on mobile. Add overflow:hidden or width constraint to the map wrapper; PUBLISHED/DELIVERED_PENDING_CONFIRMATION states pass (they don't render the map).", "selector": ".leaflet-container in ShipmentDetail", "priority": "MEDIUM"},
+      {"component": "BidModal (AvailableShipments.jsx)", "issue": "MINOR UX: clicking on [data-testid=bid-modal-overlay] no longer closes the modal. The overlay is a sibling of the card inside a `flex items-center justify-center` container, so the card intercepts pointer events over the click-through area. To restore backdrop-click-to-close, either put an onClick on the outer bid-modal container (closing when target === currentTarget) or make the overlay the click handler and put the card on a higher z-index above it (but card must accept its own clicks via stopPropagation).", "selector": "[data-testid=bid-modal-overlay]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_fixes": [
+    "BidModal on 390x844: submit-bid-btn bottom=580.5 <= 844 (was 1491 before). Cancel button inside viewport too. Modal bbox=(0,0,390,844).",
+    "BidModal on 1920x1080: submit-bid-btn bottom=698.5 <= 1080 (was ~2000+ before). Modal bbox=(0,0,1920,1080).",
+    "bid-price-input and bid-note-input accept input.",
+    "cancel-bid-btn closes the modal on both viewports.",
+    "dispute-modal on ShipmentDetail: card & inner action button inside viewport on 390x844 (card top=231 bottom=613) and 1920x1080 (card top=349 bottom=731).",
+    "Customer /customer/shipment/{id} AR: no overflow for PUBLISHED and DELIVERED_PENDING_CONFIRMATION.",
+    "Regression: /customer/shipment/{DRIVER_ASSIGNED unpaid} still shows trip-payment-required banner correctly."
+  ],
+  "test_report_links": [],
+  "action_items": [
+    "MyShipments: constrain shipment-card children with min-w-0 + truncate on the flex row containing route-inline and title, so long titles/addresses don't force horizontal expansion (especially in EN).",
+    "ShipmentDetail: wrap the Leaflet map container in a div with `overflow:hidden` and an explicit width (e.g. w-full max-w-full) so leaflet-tile images do not push scrollWidth beyond 390 on mobile.",
+    "BidModal: restore backdrop-click-to-close by handling onClick on the outer [data-testid=bid-modal] container with `if (e.target === e.currentTarget) onClose()`, OR add onClick to bid-modal-overlay and stopPropagation on the card. Currently only cancel-bid-btn dismisses the modal."
+  ],
+  "critical_code_review_comments": [
+    "BidModal backdrop UX regression is a side effect of the fix — a stacked overlay + card in flex parent makes the overlay unreachable for pointer events over the card area. Consider moving to a React portal-rendered modal with a proper click-outside handler; this also protects against any future ancestor-transform issues.",
+    "Leaflet map on mobile requires an outer `overflow:hidden` wrapper. Leaflet internally sets transforms that create huge synthetic elements (leaflet-proxy right=21736); as long as the wrapper clips them this is cosmetically fine.",
+    "EN shipment-card overflow suggests the card grid uses a fixed min-width somewhere or flex items without min-w-0. Investigate the flex row wrapper for status badge + title/route."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped)", "frontend": "BidModal fix 100% (11/11 assertions); overflow fixes ~40% (2/5 pages pass — PUBLISHED and DELIVERED_PENDING_CONFIRMATION detail OK; MyShipments AR/EN and DRIVER_ASSIGNED detail still fail)"},
+  "test_credentials": "Customer OTP +96890000001 role=customer; Driver OTP +96890000002 role=driver. demo_code returned in POST /api/auth/otp/request response. Requires {phone, role} in body.",
+  "seed_data_creation": "None; used existing iteration_3 seed data (26 customer shipments across all states, 7 published for driver marketplace).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "CRITICAL iteration_3 BidModal fix VERIFIED. Remaining MEDIUM bugs on MyShipments overflow (AR still ~47px, EN ~101px) and ShipmentDetail overflow on DRIVER_ASSIGNED (Leaflet map, ~89px). LOW: BidModal backdrop-click no longer dismisses (cancel button works). Test credentials & OTP flow: POST /api/auth/otp/request with {phone, role}; demo_code in response.",
+  "rca of the issue": "iteration_3 primary bug (BidModal off-screen) fixed by removing `animate-fade-in` from <main> — position:fixed now escapes to viewport. Side-effect: backdrop overlay is now a stacked sibling and receives no pointer events over the card region (card intercepts). MyShipments overflow appears NOT related to the animate-fade-in fix; separate CSS issue on shipment-card grid (fixed sizing / missing min-w-0 on flex children). Leaflet overflow on DRIVER_ASSIGNED detail is a standard Leaflet 'wrap in overflow:hidden' pattern."
+}

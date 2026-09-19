@@ -1,0 +1,28 @@
+{
+  "summary": "Frontend-only verification of the newly simplified Customer → Create Shipment single-page flow. Login via OTP (phone +96890000001, demo OTP shown dynamically via [data-testid=demo-otp-hint]) succeeded and landed on /customer. The Create Shipment page renders at /customer/create (NOT /customer/shipments/new as stated in the request — see note). Verified page is a single-page scrolling form (no wizard). All expected data-testids present (section-what, ship-title, photo-upload-label, photo-input, remove-photo, section-from, pickup-map-*, pickup-confirmed, section-to, delivery-map-*, delivery-confirmed, section-when, ship-pickup-date/time, ship-delivery-date/time, section-services with exactly 3 checkboxes chk-fragile/chk-loading_service/chk-unloading_service, section-summary, summary-title/route/dates/services, publish-btn). No forbidden fields (vehicle type, expected price, quantity/weight/dimensions, category, step indicator, next/back buttons) present. Validation: empty description → toast 'Please enter a shipment title'. Filled description + no locations → toast 'Please select the pickup and delivery locations.'. Photo upload/remove works. MapPicker search (Muscat/Salalah via Nominatim) returned results, selection + confirm produced pickup-confirmed and delivery-confirmed with human-readable addresses. Dates/times all accepted. Services checkboxes update summary live. POST /api/shipments returned 200 with vehicle_type='' and expected_price='' accepted; page redirected to /customer/shipments and success toast shown. Verified on mobile 390x844 and desktop 1920x1080 — layout identical, 3 checkboxes both viewports.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Route mismatch with request spec: request states path '/customer/shipments/new' but the actual registered route (CustomerPortal.jsx) is '/customer/create'. Everything else works; if the spec URL is required for external deep-links, either add a redirect (/customer/shipments/new -> /customer/create) or update spec/docs. In-app buttons (nav-create, bottomnav-create, home-create-shipment-btn) all point to the working route so end-users are unaffected."
+  ],
+  "critical_code_review_comments": [
+    "CreateShipment.jsx currently posts required_capacity: '' — request only mentioned vehicle_type and expected_price as backend-accepted empty strings; confirm backend ShipmentCreate also accepts empty string for required_capacity (currently working, returns 200).",
+    "Demo OTP hint reveals code in the UI ([data-testid=demo-otp-hint]) — fine for demo but must be gated behind a non-production flag before shipping.",
+    "MapPicker relies on Nominatim (public OSM) with no rate-limit backoff — could fail under investor demo load. Consider a fallback/error state (already handled with resolveError and retryResolve).",
+    "publish-btn triggers submit even during resolving state of MapPicker — but since it requires a confirmed pickup/delivery this is not currently exploitable."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not_tested", "frontend": "100% (11/11 scenarios verified)"},
+  "test_credentials": "Customer phone +96890000001, demo OTP dynamic (read from [data-testid=demo-otp-hint]).",
+  "seed_data_creation": "One PUBLISHED shipment created during test: title 'Deliver 20 boxes ceramics Muscat to Salalah', pickup=Muscat, delivery=Salalah (Dhofar). Persisted (not cleaned).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Customer Create Shipment simplified flow verified end-to-end. Real route is /customer/create; the request's /customer/shipments/new URL currently 404-redirects to /customer home. MapPicker Nominatim search + confirm reliably works from Playwright — search 'Muscat' / 'Salalah' and click the first result. Demo OTP must be parsed from [data-testid=demo-otp-hint] at runtime — do NOT hardcode 243150.",
+  "rca of the issue": "N/A — no bugs found in the tested flow. Only note is the URL path mismatch between spec ('/customer/shipments/new') and actual route ('/customer/create')."
+}

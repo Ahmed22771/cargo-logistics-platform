@@ -26,7 +26,7 @@ trip; trip status progression + tracking; delivery confirmation + rating; admin 
 ## Implemented (2026-06)
 - Public landing page (hero, how-it-works, services, who-uses, contact) — AR/EN.
 - OTP login (customer/driver/provider) with on-screen demo code; separate admin email/password login at /admin.
-- Customer portal: home, my shipments, 6-step Create Shipment wizard (cargo → pickup map → delivery map → schedule → vehicle/services → review → publish) with location validation, shipment detail with bid comparison, accept bid, live trip tracking, confirm delivery, rating, profile.
+- Customer portal: home, my shipments, single-page simplified Create Shipment form (description + optional photo → pickup map → delivery map → combined date/time → 3 service checkboxes → live summary + Publish) with location validation, shipment detail with bid comparison, accept bid, live trip tracking, confirm delivery, rating, profile.
 - Driver portal: home, verification banner + documents/vehicle submission, available shipments (approved-only), submit bid, my bids, active trip with status progression, trip history, profile.
 - Provider portal: dashboard (opportunities + trips), profile.
 - Admin portal: dashboard (real stats + recent activity), driver management with approve/reject/suspend/request-changes (+ audit log, marketplace eligibility effect), shipments, bids, trips, users, audit log tables.
@@ -36,6 +36,19 @@ trip; trip status progression + tracking; delivery confirmation + rating; admin 
 ## Testing (2026-06)
 - Backend: 33/33 pytest passed (auth, OTP, verification gating, full connected flow, admin endpoints, authz 401/403, persistence). Suite: /app/backend/tests/test_cargo_backend.py.
 - Frontend: language toggle+persistence, admin login/nav/logout-protection, customer & driver OTP flows, verification banner — all verified by testing agent.
+
+## Update — 2026-02 (investor feedback: simplified Create Shipment UX)
+- Rewrote `frontend/src/pages/customer/CreateShipment.jsx` from a 6-step wizard to a single-page scrolling form:
+  1) one description textarea (`ship-title`) + optional single photo upload,
+  2) pickup MapPicker (`section-from`), 3) delivery MapPicker (`section-to`),
+  4) combined `When` (pickup date/time + delivery date/time),
+  5) exactly 3 service checkboxes (fragile, loading_service, unloading_service),
+  6) live summary card at bottom with a full-width **Publish** button (`publish-btn`).
+- REMOVED: category selector, quantity/weight/dimensions, vehicle-type chooser, expected-price input, separate Review step, Next/Back wizard controls.
+- Backend already accepted empty `vehicle_type` and `expected_price` (Optional str defaults). Frontend now posts them as `""`.
+- Added Arabic + English i18n keys: simpleTitle, cargoPlaceholder, addPhotoOptional, fromTitle, toTitle, pickupWhen, deliveryWhen, servicesTitle, summary, selectedServices, noServices.
+- Verified end-to-end by testing agent (iteration_2.json): 11/11 scenarios passed on both mobile 390x844 and desktop 1920x1080. POST /api/shipments returned 200 with empty vehicle/price; redirected to /customer/shipments with success toast.
+- Route note: in-app create button routes to `/customer/create` (not `/customer/shipments/new`). All customer nav buttons already point there; users unaffected.
 
 ## Backlog (P1 — next)
 - Document image/file upload (currently reference + expiry fields; needs object storage).

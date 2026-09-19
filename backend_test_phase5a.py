@@ -8,7 +8,7 @@ import requests
 import json
 from datetime import datetime, timedelta, timezone
 
-BASE_URL = os.getenv("REACT_APP_BACKEND_URL", "https://shipment-flow-58.preview.emergentagent.com")
+BASE_URL = os.getenv("REACT_APP_BACKEND_URL", "https://cargo-logistics-43.preview.emergentagent.com")
 API_BASE = f"{BASE_URL}/api"
 
 # Test credentials

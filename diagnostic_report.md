@@ -1,7 +1,7 @@
 # CARGO Platform - Diagnostic Report
 ## Preview URL Build & Mobile/Desktop Analysis
 
-**Preview URL:** https://13a29969-91f4-45b8-a959-be284d40d47e.preview.emergentagent.com  
+**Preview URL:** https://cargo-rbac-security.preview.emergentagent.com  
 **Test Date:** September 19, 2026  
 **Test Type:** Diagnostic-only (NO code modifications)
 

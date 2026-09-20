@@ -648,6 +648,8 @@ async def confirm_delivery(tid: str, body: DeliveryConfirm, user: dict = Depends
     t = await db.trips.find_one({"id": tid})
     if not t or t["customer_id"] != user["id"]:
         raise HTTPException(status_code=404, detail="Trip not found")
+    if t.get("status") == "DISPUTED":
+        raise HTTPException(status_code=400, detail="TRIP_IN_DISPUTE")
     if t.get("status") != "DELIVERED_PENDING_CONFIRMATION":
         raise HTTPException(status_code=400, detail="Trip is not ready for delivery confirmation")
     claimed = await db.trips.update_one(
@@ -735,6 +737,8 @@ async def review_trip(tid: str, body: ReviewCreate, user: dict = Depends(require
         raise HTTPException(status_code=404, detail="Trip not found")
     if t.get("review_id"):
         raise HTTPException(status_code=409, detail="Trip already reviewed")
+    if t.get("status") == "DISPUTED":
+        raise HTTPException(status_code=400, detail="TRIP_IN_DISPUTE")
     # Phase 5A: accept both DELIVERED (legacy) and COMPLETED (current flow)
     if t.get("status") not in ("DELIVERED", "COMPLETED") or not t.get("customer_confirmed"):
         raise HTTPException(status_code=400, detail="Delivery not confirmed yet")

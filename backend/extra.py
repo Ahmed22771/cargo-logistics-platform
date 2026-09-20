@@ -315,6 +315,8 @@ async def list_roles(user: dict = Depends(require_permission("system.roles"))):
 
 @extra_api.post("/admin/roles")
 async def create_role(body: RoleBody, user: dict = Depends(require_permission("system.roles"))):
+    if body.key == "super_admin" and not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail="PLATFORM_ADMIN_ROLE_REQUIRED")
     doc = {"id": uid(), "key": body.key or body.name_en.lower().replace(" ", "_"),
            "name_ar": body.name_ar, "name_en": body.name_en, "permissions": body.permissions, "created_at": now_iso()}
     await db.roles.insert_one(doc)
@@ -328,6 +330,10 @@ async def update_role(role_id: str, body: RoleBody, user: dict = Depends(require
     r = await db.roles.find_one({"id": role_id})
     if not r:
         raise HTTPException(status_code=404, detail="Role not found")
+    if r.get("key") == "super_admin" and not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail="SUPER_ADMIN_PROTECTED")
+    if body.key == "super_admin" and not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail="PLATFORM_ADMIN_ROLE_REQUIRED")
     await db.roles.update_one({"id": role_id}, {"$set": {
         "name_ar": body.name_ar, "name_en": body.name_en, "permissions": body.permissions}})
     await audit(user, "role_updated", "role", role_id, old=r.get("permissions"), new=body.permissions)
@@ -341,6 +347,8 @@ async def list_admins(user: dict = Depends(require_permission("users.view"))):
 
 @extra_api.post("/admin/admins")
 async def create_admin(body: AdminUserBody, user: dict = Depends(require_permission("users.create"))):
+    if body.admin_role_key == "super_admin" and not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail="PLATFORM_ADMIN_ROLE_REQUIRED")
     existing = await db.users.find_one({"email": body.email.lower(), "role": "admin"})
     if existing:
         raise HTTPException(status_code=400, detail="Admin with this email exists")
@@ -357,6 +365,10 @@ async def assign_role(admin_id: str, body: AssignRoleBody, user: dict = Depends(
     a = await db.users.find_one({"id": admin_id, "role": "admin"})
     if not a:
         raise HTTPException(status_code=404, detail="Admin not found")
+    _protect_super_admin_target(user, a)
+    if body.admin_role_key == "super_admin" and not _is_super_admin(user):
+        raise HTTPException(status_code=403, detail="PLATFORM_ADMIN_ROLE_REQUIRED")
+    await _ensure_not_last_super_admin_demotion(a, body.admin_role_key)
     await db.users.update_one({"id": admin_id}, {"$set": {"admin_role_key": body.admin_role_key}})
     await audit(user, "role_assigned", "user", admin_id, old=a.get("admin_role_key"), new=body.admin_role_key)
     return {"success": True}
@@ -388,17 +400,44 @@ def _is_disabled(u: dict) -> bool:
     return (u.get("status") or "active").lower() in ("disabled", "inactive", "suspended")
 
 
+def _is_super_admin(user: dict) -> bool:
+    return user.get("role") == "admin" and user.get("admin_role_key") == "super_admin"
+
+
+def _is_super_admin_target(target: dict) -> bool:
+    return target.get("role") == "admin" and target.get("admin_role_key") == "super_admin"
+
+
+def _protect_super_admin_target(actor: dict, target: dict):
+    """Only a platform super_admin may operate on a platform super_admin account."""
+    if _is_super_admin_target(target) and not _is_super_admin(actor):
+        raise HTTPException(status_code=403, detail="SUPER_ADMIN_PROTECTED")
+
+
+async def _ensure_not_last_super_admin_demotion(target: dict, new_role: str):
+    """Preserve the last active platform super_admin during role changes."""
+    if _is_super_admin_target(target) and new_role != "super_admin":
+        active = await _count_active_super_admins()
+        target_active = (target.get("status") or "active").lower() not in ("disabled", "inactive", "suspended")
+        if target_active and active <= 1:
+            raise HTTPException(status_code=400, detail="CANNOT_MODIFY_LAST_SUPER_ADMIN")
+
+
 @extra_api.put("/admin/users/{target_id}")
 async def admin_update_user(target_id: str, body: UserUpdateBody, user: dict = Depends(require_permission("users.edit"))):
     target = await db.users.find_one({"id": target_id})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+    _protect_super_admin_target(user, target)
     updates = {}
     for f in ("name", "email", "phone", "notes"):
         v = getattr(body, f)
         if v is not None:
             updates[f] = v.lower().strip() if f == "email" else v
     if body.admin_role_key is not None and target.get("role") == "admin":
+        if body.admin_role_key == "super_admin" and not _is_super_admin(user):
+            raise HTTPException(status_code=403, detail="PLATFORM_ADMIN_ROLE_REQUIRED")
+        await _ensure_not_last_super_admin_demotion(target, body.admin_role_key)
         updates["admin_role_key"] = body.admin_role_key
     if not updates:
         raise HTTPException(status_code=400, detail="No changes provided")
@@ -415,7 +454,13 @@ async def admin_set_status(target_id: str, body: StatusBody, user: dict = Depend
     target = await db.users.find_one({"id": target_id})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+    _protect_super_admin_target(user, target)
     new_status = "disabled" if body.status.lower() in ("disabled", "inactive", "suspended") else "active"
+    if _is_super_admin_target(target) and new_status == "disabled":
+        active = await _count_active_super_admins()
+        target_active = (target.get("status") or "active").lower() not in ("disabled", "inactive", "suspended")
+        if target_active and active <= 1:
+            raise HTTPException(status_code=400, detail="CANNOT_SUSPEND_LAST_SUPER_ADMIN")
     await db.users.update_one({"id": target_id}, {"$set": {"status": new_status, "updated_at": now_iso()}})
     await audit(user, "user_disabled" if new_status == "disabled" else "user_enabled",
                 "user", target_id, old=target.get("status", "active"), new=new_status)
@@ -427,6 +472,7 @@ async def admin_reset_password(target_id: str, body: ResetPwBody, user: dict = D
     target = await db.users.find_one({"id": target_id})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+    _protect_super_admin_target(user, target)
     if target.get("role") != "admin":
         raise HTTPException(status_code=400, detail="PASSWORD_ONLY_FOR_ADMIN")
     if len(body.password or "") < 6:
@@ -463,6 +509,7 @@ async def suspend_user(target_id: str, body: SuspendBody, user: dict = Depends(r
     target = await db.users.find_one({"id": target_id})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+    _protect_super_admin_target(user, target)
     # Protect the last active Super Admin
     if target.get("role") == "admin" and target.get("admin_role_key") == "super_admin":
         active = await _count_active_super_admins()
@@ -510,6 +557,7 @@ async def activate_user(target_id: str, user: dict = Depends(require_permission(
     target = await db.users.find_one({"id": target_id})
     if not target:
         raise HTTPException(status_code=404, detail="User not found")
+    _protect_super_admin_target(user, target)
     old_status = target.get("status", "active")
     history_entry = {
         "id": uid(), "action": "ACTIVATED", "reason": "",
@@ -605,7 +653,14 @@ async def get_settings():
 
 
 async def record_trip_completion(trip: dict):
-    """Immutable ledger entries when a trip completes."""
+    """Create the immutable completion ledger exactly once.
+
+    DISPUTED is a hard financial boundary: a disputed trip may remain HELD, but
+    it must never create customer_payment, platform_commission, or driver_earning
+    transactions even if an alternate caller reaches this helper.
+    """
+    if (trip.get("status") or "").upper() == "DISPUTED":
+        return
     if await db.transactions.find_one({"trip_id": trip["id"], "type": "driver_earning"}):
         return
     s = await get_settings()

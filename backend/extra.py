@@ -1,5 +1,6 @@
 """Phase 1.1: cargo categories, configurable documents, RBAC, finance ledger."""
 import uuid
+import httpx
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -1181,3 +1182,53 @@ async def provider_finance_summary(user: dict = Depends(get_current_user)):
         "net_earnings": total_earnings - platform_commission,
         "transactions_count": len(txns),
     }
+
+
+# ================= GEOCODING PROXY (OSM Nominatim, server-side) =================
+# MapPicker previously called nominatim.openstreetmap.org directly from the browser.
+# Browser-side calls were being blocked/failing for some clients (CORS/referer/UA
+# policy + network-level blocks), which broke Search and Reverse Geocoding.
+# These endpoints proxy the SAME free OSM Nominatim service server-side with a
+# compliant User-Agent. No new paid service, no API keys, no new provider.
+NOMINATIM_BASE = "https://nominatim.openstreetmap.org"
+GEO_UA = {"User-Agent": "CARGO-logistics-app/1.0 (contact: admin@cargo.om)", "Accept": "application/json"}
+
+
+@extra_api.get("/geo/search")
+async def geo_search(q: str, lang: Optional[str] = "ar", user: dict = Depends(get_current_user)):
+    q = (q or "").strip()
+    if not q:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers=GEO_UA) as client:
+            r = await client.get(f"{NOMINATIM_BASE}/search", params={
+                "format": "jsonv2", "addressdetails": 1, "countrycodes": "om",
+                "limit": 6, "accept-language": lang or "ar", "q": q,
+            })
+            r.raise_for_status()
+            data = r.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="GEO_SEARCH_UNAVAILABLE")
+    if not isinstance(data, list):
+        return []
+    # pass through only fields the UI needs
+    return [{"lat": d.get("lat"), "lon": d.get("lon"), "display_name": d.get("display_name", ""),
+             "address": d.get("address", {})} for d in data]
+
+
+@extra_api.get("/geo/reverse")
+async def geo_reverse(lat: float, lng: float, lang: Optional[str] = "ar", user: dict = Depends(get_current_user)):
+    try:
+        async with httpx.AsyncClient(timeout=10.0, headers=GEO_UA) as client:
+            r = await client.get(f"{NOMINATIM_BASE}/reverse", params={
+                "format": "jsonv2", "addressdetails": 1, "zoom": 18,
+                "lat": lat, "lon": lng, "accept-language": lang or "ar",
+            })
+            r.raise_for_status()
+            data = r.json()
+    except Exception:
+        raise HTTPException(status_code=502, detail="GEO_REVERSE_UNAVAILABLE")
+    if not data or data.get("error"):
+        raise HTTPException(status_code=404, detail="GEO_REVERSE_EMPTY")
+    return {"display_name": data.get("display_name", ""), "address": data.get("address", {})}
+

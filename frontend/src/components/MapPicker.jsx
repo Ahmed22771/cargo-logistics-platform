@@ -4,6 +4,7 @@ import { Search, MapPin, Loader2, Check, LocateFixed, AlertTriangle } from "luci
 import { useI18n } from "../i18n";
 
 // ---- Geocoding provider abstraction (swap Nominatim for Google/Mapbox later) ----
+import api from "../lib/api";
 const orangeIcon = L.divIcon({
   className: "",
   html: `<div style="transform:translate(-50%,-100%)"><svg width="34" height="44" viewBox="0 0 34 44" xmlns="http://www.w3.org/2000/svg"><path d="M17 0C7.6 0 0 7.6 0 17c0 12 17 27 17 27s17-15 17-27C34 7.6 26.4 0 17 0z" fill="#F1701E"/><circle cx="17" cy="17" r="6.5" fill="#fff"/></svg></div>`,
@@ -11,27 +12,39 @@ const orangeIcon = L.divIcon({
 });
 
 const OMAN_CENTER = [23.588, 58.3829];
-const NOMINATIM = "https://nominatim.openstreetmap.org";
 // simple in-memory cache of reverse-geocoded results (keyed by rounded coord + lang)
 const addrCache = {};
 
-// fetch JSON with a hard timeout and support for an external abort signal
-async function fetchJson(url, { timeout = 10000, signal } = {}) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeout);
-  const onAbort = () => ctrl.abort();
-  if (signal) {
-    if (signal.aborted) ctrl.abort();
-    else signal.addEventListener("abort", onAbort);
-  }
-  try {
-    const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: "application/json" } });
-    if (!res.ok) throw new Error("http_" + res.status);
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-    if (signal) signal.removeEventListener("abort", onAbort);
-  }
+// OSM raster tiles with a resilience fallback. The primary source is the standard
+// OpenStreetMap tile server; if tile requests keep failing (some networks/proxies
+// block tile.openstreetmap.org), we transparently switch to CARTO basemaps, which
+// are also free OSM-data raster tiles (no API key, same Leaflet stack).
+const TILE_SOURCES = [
+  { url: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", attribution: "© OpenStreetMap" },
+  { url: "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png", attribution: "© OpenStreetMap © CARTO" },
+];
+
+function addResilientTiles(map, onReady) {
+  let idx = 0;
+  let layer = null;
+  let errors = 0;
+  let loaded = false;
+  const mount = () => {
+    if (layer) map.removeLayer(layer);
+    const src = TILE_SOURCES[idx];
+    layer = L.tileLayer(src.url, { attribution: src.attribution, maxZoom: 19, subdomains: idx === 0 ? "abc" : "abcd" });
+    layer.on("load", () => { loaded = true; onReady && onReady(); });
+    layer.on("tileerror", () => {
+      errors += 1;
+      // If tiles keep failing and nothing loaded yet, try the next source once.
+      if (!loaded && errors >= 4 && idx < TILE_SOURCES.length - 1) {
+        idx += 1; errors = 0; mount();
+      }
+    });
+    layer.addTo(map);
+  };
+  mount();
+  return () => loaded;
 }
 
 // Build the best human-readable label from Nominatim address components.
@@ -61,21 +74,16 @@ const geoProvider = {
   async reverse(lat, lng, lang = "ar", signal) {
     const key = `${lat.toFixed(5)},${lng.toFixed(5)},${lang}`;
     if (addrCache[key]) return addrCache[key];
-    const data = await fetchJson(
-      `${NOMINATIM}/reverse?format=jsonv2&addressdetails=1&zoom=18&lat=${lat}&lon=${lng}&accept-language=${lang}`,
-      { signal, timeout: 10000 }
-    );
-    if (!data || data.error) throw new Error("reverse_empty");
+    // server-side proxy to OSM Nominatim (avoids browser-side blocks/CORS/UA issues)
+    const { data } = await api.get("/geo/reverse", { params: { lat, lng, lang }, signal });
+    if (!data || !data.display_name && !data.address) throw new Error("reverse_empty");
     const comp = composeAddress(data.address, data.display_name);
     const out = { address: comp.formatted, city: comp.city, area: comp.area, country: comp.country };
     if (out.address) addrCache[key] = out;
     return out;
   },
   async search(q, lang = "ar", signal) {
-    const data = await fetchJson(
-      `${NOMINATIM}/search?format=jsonv2&addressdetails=1&countrycodes=om&limit=6&accept-language=${lang}&q=${encodeURIComponent(q)}`,
-      { signal, timeout: 10000 }
-    );
+    const { data } = await api.get("/geo/search", { params: { q, lang }, signal });
     return Array.isArray(data) ? data : [];
   },
 };
@@ -170,16 +178,12 @@ export function MapPicker({ value, onConfirm, testIdPrefix = "map", accentConfir
       const map = L.map(mapEl.current, { zoomControl: true }).setView(
         value ? [value.lat, value.lng] : OMAN_CENTER, value ? 14 : 7
       );
-      const tiles = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "© OpenStreetMap", maxZoom: 19,
-      });
       let loaded = false;
-      tiles.on("load", () => { loaded = true; setMapReady(true); });
-      tiles.addTo(map);
+      const isLoaded = addResilientTiles(map, () => { loaded = true; setMapReady(true); });
       map.on("click", (e) => setMarker(e.latlng.lat, e.latlng.lng));
       mapRef.current = map;
       if (value) setMarker(value.lat, value.lng, { address: value.address, city: value.city, area: value.area, country: value.country });
-      setTimeout(() => { map.invalidateSize(); if (!loaded) setMapReady(true); }, 600);
+      setTimeout(() => { map.invalidateSize(); if (!loaded && !isLoaded()) setMapReady(true); }, 900);
     } catch {
       setMapError(true);
     }
@@ -307,7 +311,7 @@ export function StaticRouteMap({ pickup, delivery, height = 260 }) {
   useEffect(() => {
     if (mapRef.current || !mapEl.current) return;
     const map = L.map(mapEl.current, { zoomControl: false, dragging: true, scrollWheelZoom: false }).setView(OMAN_CENTER, 7);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OpenStreetMap", maxZoom: 19 }).addTo(map);
+    addResilientTiles(map);
     const pts = [];
     if (pickup) { L.marker([pickup.lat, pickup.lng], { icon: orangeIcon }).addTo(map); pts.push([pickup.lat, pickup.lng]); }
     if (delivery) {

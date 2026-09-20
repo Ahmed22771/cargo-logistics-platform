@@ -889,3 +889,295 @@ async def ops_stats(user: dict = Depends(require_roles("admin"))):
         "expiring_documents": expiring, "expired_documents": expired,
         "pending_transactions": await db.transactions.count_documents({"status": "PENDING"}),
     }
+
+
+
+# ================= COMPANY / PROVIDER PORTAL =================
+from models import VehicleBody, VehicleAssignBody, ProviderLinkDriverBody, ProviderBidBody  # noqa: E402
+
+
+def _provider_only(user: dict):
+    if user.get("role") != "provider":
+        raise HTTPException(status_code=403, detail="PROVIDER_ONLY")
+
+
+async def _get_company_driver(provider_id: str, driver_id: str) -> Optional[dict]:
+    return await db.users.find_one(
+        {"id": driver_id, "role": "driver", "company_id": provider_id},
+        {"_id": 0, "password_hash": 0},
+    )
+
+
+# ---- Vehicles ----
+@extra_api.get("/provider/vehicles")
+async def list_vehicles(user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    docs = await db.vehicles.find({"owner_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    driver_ids = [d.get("assigned_driver_id") for d in docs if d.get("assigned_driver_id")]
+    drivers = {}
+    if driver_ids:
+        cur = db.users.find({"id": {"$in": driver_ids}}, {"_id": 0, "id": 1, "name": 1, "phone": 1})
+        for d in await cur.to_list(500):
+            drivers[d["id"]] = d
+    for v in docs:
+        did = v.get("assigned_driver_id")
+        v["assigned_driver"] = drivers.get(did) if did else None
+    return docs
+
+
+@extra_api.get("/provider/vehicles/{vid}")
+async def get_vehicle(vid: str, user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    v = await db.vehicles.find_one({"id": vid, "owner_id": user["id"]}, {"_id": 0})
+    if not v:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    if v.get("assigned_driver_id"):
+        drv = await db.users.find_one(
+            {"id": v["assigned_driver_id"]}, {"_id": 0, "id": 1, "name": 1, "phone": 1}
+        )
+        v["assigned_driver"] = drv
+    return v
+
+
+@extra_api.post("/provider/vehicles")
+async def create_vehicle(body: VehicleBody, user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    plate = (body.plate_number or "").strip()
+    if not plate:
+        raise HTTPException(status_code=400, detail="PLATE_REQUIRED")
+    dup = await db.vehicles.find_one({"owner_id": user["id"], "plate_number": plate})
+    if dup:
+        raise HTTPException(status_code=400, detail="PLATE_DUPLICATE")
+    if body.assigned_driver_id:
+        drv = await _get_company_driver(user["id"], body.assigned_driver_id)
+        if not drv:
+            raise HTTPException(status_code=400, detail="DRIVER_NOT_IN_COMPANY")
+    doc = {
+        "id": uid(), "owner_id": user["id"], "plate_number": plate,
+        "vehicle_type": body.vehicle_type or "", "make": body.make or "",
+        "model": body.model or "", "year": body.year or "", "color": body.color or "",
+        "capacity": body.capacity or "", "notes": body.notes or "",
+        "status": (body.status or "ACTIVE").upper(),
+        "assigned_driver_id": body.assigned_driver_id,
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.vehicles.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@extra_api.put("/provider/vehicles/{vid}")
+async def update_vehicle(vid: str, body: VehicleBody, user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    v = await db.vehicles.find_one({"id": vid, "owner_id": user["id"]})
+    if not v:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    plate = (body.plate_number or "").strip()
+    if not plate:
+        raise HTTPException(status_code=400, detail="PLATE_REQUIRED")
+    if plate != v.get("plate_number"):
+        dup = await db.vehicles.find_one({"owner_id": user["id"], "plate_number": plate, "id": {"$ne": vid}})
+        if dup:
+            raise HTTPException(status_code=400, detail="PLATE_DUPLICATE")
+    if body.assigned_driver_id:
+        drv = await _get_company_driver(user["id"], body.assigned_driver_id)
+        if not drv:
+            raise HTTPException(status_code=400, detail="DRIVER_NOT_IN_COMPANY")
+    updates = {
+        "plate_number": plate,
+        "vehicle_type": body.vehicle_type or "", "make": body.make or "",
+        "model": body.model or "", "year": body.year or "", "color": body.color or "",
+        "capacity": body.capacity or "", "notes": body.notes or "",
+        "status": (body.status or "ACTIVE").upper(),
+        "assigned_driver_id": body.assigned_driver_id,
+        "updated_at": now_iso(),
+    }
+    await db.vehicles.update_one({"id": vid}, {"$set": updates})
+    return await db.vehicles.find_one({"id": vid}, {"_id": 0})
+
+
+@extra_api.delete("/provider/vehicles/{vid}")
+async def delete_vehicle(vid: str, user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    v = await db.vehicles.find_one({"id": vid, "owner_id": user["id"]})
+    if not v:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    await db.vehicles.delete_one({"id": vid})
+    return {"success": True}
+
+
+@extra_api.post("/provider/vehicles/{vid}/assign")
+async def assign_vehicle_driver(vid: str, body: VehicleAssignBody, user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    v = await db.vehicles.find_one({"id": vid, "owner_id": user["id"]})
+    if not v:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    driver_id = body.driver_id or None
+    if driver_id:
+        drv = await _get_company_driver(user["id"], driver_id)
+        if not drv:
+            raise HTTPException(status_code=400, detail="DRIVER_NOT_IN_COMPANY")
+    await db.vehicles.update_one({"id": vid}, {"$set": {
+        "assigned_driver_id": driver_id, "updated_at": now_iso()}})
+    return {"success": True, "assigned_driver_id": driver_id}
+
+
+# ---- Company drivers ----
+@extra_api.get("/provider/drivers")
+async def list_company_drivers(user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    drivers = await db.users.find(
+        {"role": "driver", "company_id": user["id"]},
+        {"_id": 0, "password_hash": 0},
+    ).sort("created_at", -1).to_list(500)
+    # Attach current active trip and vehicle summary
+    active_states = {"DRIVER_ASSIGNED", "PICKUP_ARRIVED", "PICKED_UP", "IN_TRANSIT",
+                     "DRIVER_ARRIVED_DESTINATION", "DELIVERED_PENDING_CONFIRMATION"}
+    for d in drivers:
+        trip = await db.trips.find_one(
+            {"driver_id": d["id"], "status": {"$in": list(active_states)}},
+            {"_id": 0, "id": 1, "status": 1, "shipment_title": 1},
+        )
+        d["active_trip"] = trip
+        veh = await db.vehicles.find_one(
+            {"owner_id": user["id"], "assigned_driver_id": d["id"]},
+            {"_id": 0, "id": 1, "plate_number": 1, "vehicle_type": 1},
+        )
+        d["current_vehicle"] = veh
+    return drivers
+
+
+@extra_api.get("/provider/drivers/{driver_id}")
+async def get_company_driver(driver_id: str, user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    d = await _get_company_driver(user["id"], driver_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    d["documents"] = await db.documents.find({"owner_id": driver_id}, {"_id": 0}).to_list(200)
+    d["current_vehicle"] = await db.vehicles.find_one(
+        {"owner_id": user["id"], "assigned_driver_id": driver_id}, {"_id": 0}
+    )
+    d["trips"] = await db.trips.find(
+        {"driver_id": driver_id, "provider_id": user["id"]},
+        {"_id": 0},
+    ).sort("created_at", -1).to_list(100)
+    return d
+
+
+@extra_api.post("/provider/drivers/link")
+async def link_driver_to_company(body: ProviderLinkDriverBody, user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    phone = (body.phone or "").strip()
+    if not phone:
+        raise HTTPException(status_code=400, detail="PHONE_REQUIRED")
+    drv = await db.users.find_one({"role": "driver", "phone": phone}, {"_id": 0, "password_hash": 0})
+    if not drv:
+        raise HTTPException(status_code=404, detail="DRIVER_NOT_FOUND")
+    existing_company = drv.get("company_id")
+    if existing_company and existing_company != user["id"]:
+        raise HTTPException(status_code=400, detail="DRIVER_IN_OTHER_COMPANY")
+    if drv.get("verification_status") != "APPROVED":
+        raise HTTPException(status_code=400, detail="DRIVER_NOT_APPROVED")
+    await db.users.update_one({"id": drv["id"]}, {"$set": {"company_id": user["id"], "updated_at": now_iso()}})
+    return {"success": True, "driver_id": drv["id"], "name": drv.get("name"), "phone": drv.get("phone")}
+
+
+@extra_api.delete("/provider/drivers/{driver_id}")
+async def unlink_driver(driver_id: str, user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    d = await _get_company_driver(user["id"], driver_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    # unassign from any vehicle first
+    await db.vehicles.update_many(
+        {"owner_id": user["id"], "assigned_driver_id": driver_id},
+        {"$set": {"assigned_driver_id": None, "updated_at": now_iso()}},
+    )
+    await db.users.update_one({"id": driver_id}, {"$unset": {"company_id": ""}, "$set": {"updated_at": now_iso()}})
+    return {"success": True}
+
+
+# ---- Provider trips ----
+@extra_api.get("/provider/trips")
+async def list_provider_trips(user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    trips = await db.trips.find({"provider_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(1000)
+    return trips
+
+
+# ---- Provider bidding (on behalf of a company driver) ----
+@extra_api.post("/provider/shipments/{sid}/bids")
+async def provider_submit_bid(sid: str, body: ProviderBidBody, user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    if body.price is None or body.price <= 0:
+        raise HTTPException(status_code=400, detail="INVALID_PRICE")
+    drv = await _get_company_driver(user["id"], body.driver_id)
+    if not drv:
+        raise HTTPException(status_code=400, detail="DRIVER_NOT_IN_COMPANY")
+    if drv.get("verification_status") != "APPROVED":
+        raise HTTPException(status_code=400, detail="DRIVER_NOT_APPROVED")
+    if (drv.get("status") or "active").lower() in ("inactive", "suspended", "disabled"):
+        raise HTTPException(status_code=400, detail="DRIVER_INACTIVE")
+    s = await db.shipments.find_one({"id": sid})
+    if not s or s.get("status") not in ("PUBLISHED", "BIDDING"):
+        raise HTTPException(status_code=400, detail="Shipment not open for bids")
+    existing = await db.bids.find_one({"shipment_id": sid, "driver_id": drv["id"], "status": "PENDING"})
+    if existing:
+        raise HTTPException(status_code=400, detail="ALREADY_BID")
+    bid = {
+        "id": uid(), "shipment_id": sid, "driver_id": drv["id"], "driver_name": drv.get("name", ""),
+        "provider_id": user["id"], "price": float(body.price), "note": body.note or "",
+        "status": "PENDING", "driver_rating": drv.get("rating", 0),
+        "driver_rating_count": drv.get("rating_count", 0),
+        "driver_completed_trips": drv.get("completed_trips", 0),
+        "driver_vehicle": drv.get("vehicle", {}),
+        "driver_verification": drv.get("verification_status"),
+        "submitted_by_role": "provider",
+        "created_at": now_iso(), "updated_at": now_iso(),
+    }
+    await db.bids.insert_one(bid)
+    if s["status"] == "PUBLISHED":
+        await db.shipments.update_one({"id": sid}, {"$set": {"status": "BIDDING", "updated_at": now_iso()}})
+    # notify customer using existing notifications collection
+    await notify(
+        s["customer_id"], "new_bid", "عرض جديد على شحنتك", "New bid on your shipment",
+        f"عرض بقيمة {body.price} ر.ع على «{s['title']}»",
+        f"A bid of OMR {body.price} on \"{s['title']}\"",
+        entity_type="shipment", entity_id=sid,
+        meta={"shipment_id": sid, "bid_id": bid["id"]},
+    )
+    bid.pop("_id", None)
+    return bid
+
+
+# ---- Provider finance summary (uses existing transactions) ----
+@extra_api.get("/provider/finance/summary")
+async def provider_finance_summary(user: dict = Depends(get_current_user)):
+    _provider_only(user)
+    txns = await db.transactions.find(
+        {"account_id": user["id"], "account_role": "provider"}, {"_id": 0}
+    ).to_list(2000)
+    total_earnings = 0.0
+    held = 0.0
+    completed = 0.0
+    platform_commission = 0.0
+    for t in txns:
+        amt = float(t.get("amount") or 0)
+        typ = t.get("type", "")
+        st = (t.get("status") or "").upper()
+        if typ in ("provider_earning", "driver_earning"):
+            total_earnings += amt
+            if st in ("HELD", "PENDING"):
+                held += amt
+            elif st in ("COMPLETED", "SETTLED", "PAID"):
+                completed += amt
+        if typ == "platform_commission":
+            platform_commission += amt
+    return {
+        "total_earnings": total_earnings,
+        "held": held,
+        "completed": completed,
+        "platform_commission": platform_commission,
+        "net_earnings": total_earnings - platform_commission,
+        "transactions_count": len(txns),
+    }

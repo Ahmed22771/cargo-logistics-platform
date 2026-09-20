@@ -18,3 +18,7 @@ async def ensure_indexes():
     await db.notifications.create_index("user_id")
     # A trip represents one completed service and can receive exactly one review.
     await db.reviews.create_index("trip_id", unique=True)
+    await db.vehicles.create_index([("owner_id", 1), ("plate_number", 1)], unique=True)
+    await db.vehicles.create_index("owner_id")
+    await db.users.create_index("company_id")
+

@@ -108,3 +108,32 @@ class ReviewCreate(BaseModel):
 class VerifyAction(BaseModel):
     action: str  # approve | reject | suspend | request_changes
     notes: Optional[str] = ""
+
+
+# ================ Company / Provider portal ================
+class VehicleBody(BaseModel):
+    plate_number: str
+    vehicle_type: Optional[str] = ""
+    make: Optional[str] = ""
+    model: Optional[str] = ""
+    year: Optional[str] = ""
+    color: Optional[str] = ""
+    capacity: Optional[str] = ""
+    notes: Optional[str] = ""
+    status: Optional[str] = "ACTIVE"  # ACTIVE | INACTIVE | MAINTENANCE
+    assigned_driver_id: Optional[str] = None
+
+
+class VehicleAssignBody(BaseModel):
+    driver_id: Optional[str] = None  # None to unassign
+
+
+class ProviderLinkDriverBody(BaseModel):
+    phone: str
+
+
+class ProviderBidBody(BaseModel):
+    driver_id: str
+    price: float
+    note: Optional[str] = ""
+

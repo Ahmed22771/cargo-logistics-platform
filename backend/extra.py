@@ -1235,7 +1235,7 @@ async def geo_reverse(lat: float, lng: float, lang: Optional[str] = "ar", user: 
 
 
 
-# ================= DISPUTE RESOLUTION (Phase 1 — admin final decision) =================
+# ================= DISPUTE RESOLUTION (Financial Resolution Core — service layer) =================
 class DisputeResolveBody(BaseModel):
     outcome: str  # RELEASE_TO_DRIVER | FULL_REFUND
     reason: str
@@ -1243,11 +1243,44 @@ class DisputeResolveBody(BaseModel):
 
 ALLOWED_DISPUTE_OUTCOMES = {"RELEASE_TO_DRIVER", "FULL_REFUND"}
 
+# Payment-hold (escrow) lifecycle. The original payment_hold ledger row is NEVER
+# deleted or replaced — only its current status transitions, preserving history:
+#   HELD -> RELEASED  (dispute resolved in the driver's/provider's favor)
+#   HELD -> REFUNDED  (dispute resolved as a full refund to the customer)
+HOLD_STATUS_HELD = "HELD"
+HOLD_STATUS_RELEASED = "RELEASED"
+HOLD_STATUS_REFUNDED = "REFUNDED"
+
 
 async def _notify_all_admins(type_, title_ar, title_en, body_ar, body_en, meta=None):
     admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(200)
     for a in admins:
         await notify(a["id"], type_, title_ar, title_en, body_ar, body_en, meta=meta)
+
+
+async def _finalize_payment_hold(trip_id: str, new_status: str, actor: dict, now: str,
+                                 outcome: str, extra: Optional[dict] = None) -> Optional[dict]:
+    """Transition the trip's payment_hold ledger row HELD -> RELEASED|REFUNDED.
+
+    The original row is preserved for audit/history; only its status and
+    resolution-linkage fields change. The conditional filter on status=HELD makes
+    the transition safe under retries (a second call is a no-op). Returns the hold
+    document as it was BEFORE the transition, or None when the trip has no hold.
+    """
+    hold = await db.transactions.find_one({"trip_id": trip_id, "type": "payment_hold"}, {"_id": 0})
+    if not hold:
+        return None
+    updates = {
+        "status": new_status,
+        "resolution_outcome": outcome,
+        "resolved_at": now,
+        "resolved_by_id": actor["id"],
+        "resolved_by_name": actor.get("name", ""),
+    }
+    if extra:
+        updates.update(extra)
+    await db.transactions.update_one({"id": hold["id"], "status": HOLD_STATUS_HELD}, {"$set": updates})
+    return hold
 
 
 @extra_api.get("/admin/disputes")
@@ -1291,47 +1324,70 @@ async def dispute_detail(trip_id: str, user: dict = Depends(require_permission("
     return {"trip": tr, "shipment": shipment, "payment_hold": hold, "transactions": txns}
 
 
-@extra_api.post("/admin/disputes/{trip_id}/resolve")
-async def resolve_dispute(trip_id: str, body: DisputeResolveBody,
-                          user: dict = Depends(require_permission("disputes.resolve"))):
-    """Phase 1 dispute resolution. Two outcomes only:
-    - RELEASE_TO_DRIVER: DISPUTED -> COMPLETED and the existing settlement ledger
-      is created exactly once (customer_payment + platform_commission + driver/provider_earning).
-    - FULL_REFUND: DISPUTED -> REFUNDED with a single refund transaction; NO driver_earning,
-      NO platform_commission on the refunded amount.
-    Idempotent: a second resolve request returns 409 ALREADY_RESOLVED.
+async def execute_dispute_resolution(trip_id: str, outcome: str, reason: str, actor: dict) -> dict:
+    """Financial Resolution Core — route-agnostic service layer.
+
+    Owns the complete state + ledger transition for resolving a disputed trip so
+    the HTTP layer stays a thin adapter and this logic can later be extracted
+    (or re-implemented in Go/Node/Java) without touching routes or UI.
+
+    Outcomes:
+      RELEASE_TO_DRIVER: trip DISPUTED -> COMPLETED, shipment -> COMPLETED,
+        payment_hold HELD -> RELEASED, trip.payment_status -> RELEASED, then the
+        existing settlement ledger (customer_payment + platform_commission +
+        driver/provider_earning) is created exactly once via record_trip_completion().
+      FULL_REFUND: trip DISPUTED -> REFUNDED, shipment -> REFUNDED,
+        payment_hold HELD -> REFUNDED, trip.payment_status -> REFUNDED, and exactly
+        one refund transaction is created. No driver/provider earning and no
+        platform commission are created for the refunded amount.
+
+    Idempotency & conflicts:
+      * Any second resolve call — same OR different outcome — finds the trip no
+        longer DISPUTED (or dispute.status == RESOLVED) and raises 409
+        ALREADY_RESOLVED. The first decision is never modified.
+      * The atomic claim filter guarantees a single winner under concurrency.
+      * The payment_hold row is preserved (status transition only); refund
+        creation is guarded by an existing-refund check.
     """
-    outcome = (body.outcome or "").upper()
+    outcome = (outcome or "").upper()
     if outcome not in ALLOWED_DISPUTE_OUTCOMES:
         raise HTTPException(status_code=400, detail="INVALID_DISPUTE_OUTCOME")
-    if not (body.reason or "").strip():
+    if not (reason or "").strip():
         raise HTTPException(status_code=400, detail="DISPUTE_REASON_REQUIRED")
 
     tr = await db.trips.find_one({"id": trip_id})
     if not tr or not tr.get("dispute"):
         raise HTTPException(status_code=404, detail="Dispute not found")
-    if tr.get("status") != "DISPUTED":
-        # Already resolved or otherwise moved out of DISPUTED — reject
-        raise HTTPException(status_code=409, detail="ALREADY_RESOLVED")
-    if (tr.get("dispute") or {}).get("status") == "RESOLVED":
+    if tr.get("status") != "DISPUTED" or (tr.get("dispute") or {}).get("status") == "RESOLVED":
+        # Already resolved (either outcome) or moved out of DISPUTED — reject
+        # without touching the previous decision or its ledger effects.
         raise HTTPException(status_code=409, detail="ALREADY_RESOLVED")
 
     now = now_iso()
     amount = float(tr.get("price", 0) or 0)
+    old_payment_status = tr.get("payment_status") or "NONE"
     resolved_payload = {
-        "status": "RESOLVED", "outcome": outcome, "resolution_reason": body.reason,
-        "resolved_by_id": user["id"], "resolved_by_name": user.get("name", ""),
+        "status": "RESOLVED", "outcome": outcome, "resolution_reason": reason,
+        "resolved_by_id": actor["id"], "resolved_by_name": actor.get("name", ""),
         "resolved_at": now,
+    }
+    dispute_id = (tr.get("dispute") or {}).get("opened_at")  # one dispute per trip; opened_at identifies it
+    base_audit = {
+        "id": uid(), "admin_id": actor["id"], "admin_name": actor.get("name", ""),
+        "actor_id": actor["id"], "actor_name": actor.get("name", ""), "actor_role": "admin",
+        "entity": "trip", "entity_id": trip_id, "reason": reason,
+        "result": "success", "timestamp": now,
     }
 
     if outcome == "RELEASE_TO_DRIVER":
-        # Atomic transition DISPUTED -> COMPLETED. The compound filter guarantees only
-        # the first concurrent request wins; any duplicate request will fail the filter
-        # and see modified_count == 0.
+        # Atomic claim DISPUTED -> COMPLETED. The compound filter guarantees only
+        # the first concurrent request wins; any duplicate request will fail the
+        # filter and see modified_count == 0.
         claimed = await db.trips.update_one(
             {"id": trip_id, "status": "DISPUTED", "dispute.status": {"$ne": "RESOLVED"}},
             {"$set": {
                 "status": "COMPLETED", "customer_confirmed": True,
+                "payment_status": HOLD_STATUS_RELEASED,
                 "dispute": {**tr["dispute"], **resolved_payload},
                 "delivered_at": tr.get("delivered_at") or now,
                 "completed_at": now, "updated_at": now,
@@ -1340,37 +1396,46 @@ async def resolve_dispute(trip_id: str, body: DisputeResolveBody,
         if claimed.modified_count != 1:
             raise HTTPException(status_code=409, detail="ALREADY_RESOLVED")
         await db.shipments.update_one({"id": tr["shipment_id"]}, {"$set": {"status": "COMPLETED", "updated_at": now}})
+
+        # Escrow release: original payment_hold row preserved, status -> RELEASED.
+        hold_before = await _finalize_payment_hold(trip_id, HOLD_STATUS_RELEASED, actor, now, outcome)
+
+        # Reuse the existing settlement helper — it short-circuits if the earning
+        # already exists, so duplicate calls can never create duplicate ledger rows.
+        # Provider trips automatically produce provider_earning (existing logic).
         fresh = await db.trips.find_one({"id": trip_id}, {"_id": 0})
-        # Reuse the existing settlement helper. It short-circuits if driver_earning
-        # already exists, so it is safe under duplicate calls.
         await record_trip_completion(fresh)
+
         await db.audit_logs.insert_one({
-            "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
-            "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": "admin",
-            "action": "DISPUTE_RESOLVED_RELEASE", "entity": "trip", "entity_id": trip_id,
-            "old_value": {"status": "DISPUTED", "dispute_state": "OPEN"},
+            **base_audit,
+            "action": "DISPUTE_RESOLVED_RELEASE",
+            "old_value": {"status": "DISPUTED", "dispute_state": "OPEN",
+                          "payment_status": old_payment_status,
+                          "hold_status": (hold_before or {}).get("status")},
             "new_value": {"status": "COMPLETED", "outcome": outcome, "amount": amount,
-                          "shipment_id": tr.get("shipment_id"), "dispute_id": tr.get("dispute", {}).get("opened_at")},
-            "reason": body.reason, "result": "success", "timestamp": now,
+                          "payment_status": HOLD_STATUS_RELEASED, "hold_status": HOLD_STATUS_RELEASED,
+                          "shipment_id": tr.get("shipment_id"), "trip_id": trip_id,
+                          "dispute_id": dispute_id},
         })
         # Notify parties
         await notify(tr["driver_id"], "dispute_resolved", "تم حل النزاع لصالحك",
-                     "Dispute resolved in your favor", body.reason, body.reason,
+                     "Dispute resolved in your favor", reason, reason,
                      entity_type="trip", entity_id=trip_id)
         await notify(tr["customer_id"], "dispute_resolved", "تم حل النزاع",
-                     "Dispute resolved", body.reason, body.reason,
+                     "Dispute resolved", reason, reason,
                      entity_type="trip", entity_id=trip_id)
         await _notify_all_admins("dispute_resolved", "تم حل نزاع", "Dispute resolved",
-                                 body.reason, body.reason,
+                                 reason, reason,
                                  meta={"trip_id": trip_id, "outcome": outcome})
-        return await db.trips.find_one({"id": trip_id}, {"_id": 0})
+        return fresh
 
     # ---- FULL_REFUND ----
-    # Atomic transition DISPUTED -> REFUNDED.
+    # Atomic claim DISPUTED -> REFUNDED.
     claimed = await db.trips.update_one(
         {"id": trip_id, "status": "DISPUTED", "dispute.status": {"$ne": "RESOLVED"}},
         {"$set": {
             "status": "REFUNDED",
+            "payment_status": HOLD_STATUS_REFUNDED,
             "dispute": {**tr["dispute"], **resolved_payload},
             "refunded_at": now, "updated_at": now,
         }},
@@ -1379,39 +1444,56 @@ async def resolve_dispute(trip_id: str, body: DisputeResolveBody,
         raise HTTPException(status_code=409, detail="ALREADY_RESOLVED")
     await db.shipments.update_one({"id": tr["shipment_id"]}, {"$set": {"status": "REFUNDED", "updated_at": now}})
 
-    # Idempotent refund insert: only one refund transaction per trip.
+    # Exactly one refund transaction per trip (idempotent under retries).
+    # No driver/provider earning and no platform commission are created here.
     s = await get_settings()
     existing_refund = await db.transactions.find_one({"trip_id": trip_id, "type": "refund"})
+    refund_txn_id = (existing_refund or {}).get("id")
     if not existing_refund:
-        refund_txn = {
-            "id": uid(), "type": "refund",
+        refund_txn_id = uid()
+        await db.transactions.insert_one({
+            "id": refund_txn_id, "type": "refund",
             "account_id": tr["customer_id"], "account_role": "customer",
             "shipment_id": tr.get("shipment_id"), "trip_id": trip_id,
             "amount": amount, "gross": amount, "commission": 0, "net": amount,
             "currency": s["currency"], "status": "COMPLETED",
             "description": f"Dispute full refund for {tr.get('shipment_title','')}",
-            "reason": body.reason,
-            "created_by": user.get("name"), "created_by_id": user["id"], "created_at": now,
-        }
-        await db.transactions.insert_one(refund_txn)
+            "reason": reason,
+            "created_by": actor.get("name"), "created_by_id": actor["id"], "created_at": now,
+        })
+
+    # Escrow refund: original payment_hold row preserved, status -> REFUNDED,
+    # linked to the refund transaction.
+    hold_before = await _finalize_payment_hold(trip_id, HOLD_STATUS_REFUNDED, actor, now, outcome,
+                                               {"refund_txn_id": refund_txn_id})
 
     await db.audit_logs.insert_one({
-        "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
-        "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": "admin",
-        "action": "DISPUTE_RESOLVED_REFUND", "entity": "trip", "entity_id": trip_id,
-        "old_value": {"status": "DISPUTED", "dispute_state": "OPEN"},
+        **base_audit,
+        "action": "DISPUTE_RESOLVED_REFUND",
+        "old_value": {"status": "DISPUTED", "dispute_state": "OPEN",
+                      "payment_status": old_payment_status,
+                      "hold_status": (hold_before or {}).get("status")},
         "new_value": {"status": "REFUNDED", "outcome": outcome, "amount": amount,
-                      "shipment_id": tr.get("shipment_id"), "dispute_id": tr.get("dispute", {}).get("opened_at")},
-        "reason": body.reason, "result": "success", "timestamp": now,
+                      "payment_status": HOLD_STATUS_REFUNDED, "hold_status": HOLD_STATUS_REFUNDED,
+                      "refund_txn_id": refund_txn_id,
+                      "shipment_id": tr.get("shipment_id"), "trip_id": trip_id,
+                      "dispute_id": dispute_id},
     })
     await notify(tr["customer_id"], "dispute_refunded", "تم رد المبلغ بالكامل",
-                 "Full refund issued", body.reason, body.reason,
+                 "Full refund issued", reason, reason,
                  entity_type="trip", entity_id=trip_id)
     await notify(tr["driver_id"], "dispute_resolved", "تم حل النزاع",
-                 "Dispute resolved", body.reason, body.reason,
+                 "Dispute resolved", reason, reason,
                  entity_type="trip", entity_id=trip_id)
     await _notify_all_admins("dispute_resolved", "تم حل نزاع (استرداد)", "Dispute resolved (refund)",
-                             body.reason, body.reason,
+                             reason, reason,
                              meta={"trip_id": trip_id, "outcome": outcome})
     return await db.trips.find_one({"id": trip_id}, {"_id": 0})
+
+
+@extra_api.post("/admin/disputes/{trip_id}/resolve")
+async def resolve_dispute(trip_id: str, body: DisputeResolveBody,
+                          user: dict = Depends(require_permission("disputes.resolve"))):
+    """Thin HTTP adapter — all financial/state logic lives in execute_dispute_resolution()."""
+    return await execute_dispute_resolution(trip_id, body.outcome, body.reason, user)
 

@@ -29,6 +29,7 @@ PERMISSIONS = [
     "finance.view", "finance.transactions", "finance.commission", "finance.payouts", "finance.adjust", "finance.refund", "finance.reverse",
     "reports.view", "reports.export",
     "system.settings", "system.roles", "system.permissions", "system.audit",
+    "disputes.view", "disputes.resolve",
 ]
 
 
@@ -1231,4 +1232,186 @@ async def geo_reverse(lat: float, lng: float, lang: Optional[str] = "ar", user: 
     if not data or data.get("error"):
         raise HTTPException(status_code=404, detail="GEO_REVERSE_EMPTY")
     return {"display_name": data.get("display_name", ""), "address": data.get("address", {})}
+
+
+
+# ================= DISPUTE RESOLUTION (Phase 1 — admin final decision) =================
+class DisputeResolveBody(BaseModel):
+    outcome: str  # RELEASE_TO_DRIVER | FULL_REFUND
+    reason: str
+
+
+ALLOWED_DISPUTE_OUTCOMES = {"RELEASE_TO_DRIVER", "FULL_REFUND"}
+
+
+async def _notify_all_admins(type_, title_ar, title_en, body_ar, body_en, meta=None):
+    admins = await db.users.find({"role": "admin"}, {"_id": 0, "id": 1}).to_list(200)
+    for a in admins:
+        await notify(a["id"], type_, title_ar, title_en, body_ar, body_en, meta=meta)
+
+
+@extra_api.get("/admin/disputes")
+async def list_disputes(status: Optional[str] = None,
+                        user: dict = Depends(require_permission("disputes.view"))):
+    """List trips currently in DISPUTED plus resolved disputes. Filter by status
+    when the UI needs open/resolved sections."""
+    query = {"dispute": {"$exists": True}}
+    trips = await db.trips.find(query, {"_id": 0}).sort("updated_at", -1).to_list(500)
+    out = []
+    for tr in trips:
+        d = tr.get("dispute") or {}
+        state = "OPEN" if tr.get("status") == "DISPUTED" else "RESOLVED"
+        if status and status.upper() != state:
+            continue
+        out.append({
+            "trip_id": tr["id"], "shipment_id": tr.get("shipment_id"),
+            "shipment_title": tr.get("shipment_title"),
+            "trip_status": tr.get("status"), "payment_status": tr.get("payment_status"),
+            "customer_id": tr.get("customer_id"), "customer_name": tr.get("customer_name"),
+            "driver_id": tr.get("driver_id"), "driver_name": tr.get("driver_name"),
+            "provider_id": tr.get("provider_id"),
+            "amount": tr.get("price"),
+            "opened_at": d.get("opened_at"), "reason": d.get("reason"),
+            "state": state, "outcome": d.get("outcome"),
+            "resolved_by_name": d.get("resolved_by_name"), "resolved_at": d.get("resolved_at"),
+        })
+    return out
+
+
+@extra_api.get("/admin/disputes/{trip_id}")
+async def dispute_detail(trip_id: str, user: dict = Depends(require_permission("disputes.view"))):
+    tr = await db.trips.find_one({"id": trip_id}, {"_id": 0})
+    if not tr or not tr.get("dispute"):
+        raise HTTPException(status_code=404, detail="Dispute not found")
+    shipment = await db.shipments.find_one({"id": tr.get("shipment_id")}, {"_id": 0})
+    hold = await db.transactions.find_one(
+        {"trip_id": trip_id, "type": "payment_hold"}, {"_id": 0}
+    )
+    txns = await db.transactions.find({"trip_id": trip_id}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    return {"trip": tr, "shipment": shipment, "payment_hold": hold, "transactions": txns}
+
+
+@extra_api.post("/admin/disputes/{trip_id}/resolve")
+async def resolve_dispute(trip_id: str, body: DisputeResolveBody,
+                          user: dict = Depends(require_permission("disputes.resolve"))):
+    """Phase 1 dispute resolution. Two outcomes only:
+    - RELEASE_TO_DRIVER: DISPUTED -> COMPLETED and the existing settlement ledger
+      is created exactly once (customer_payment + platform_commission + driver/provider_earning).
+    - FULL_REFUND: DISPUTED -> REFUNDED with a single refund transaction; NO driver_earning,
+      NO platform_commission on the refunded amount.
+    Idempotent: a second resolve request returns 409 ALREADY_RESOLVED.
+    """
+    outcome = (body.outcome or "").upper()
+    if outcome not in ALLOWED_DISPUTE_OUTCOMES:
+        raise HTTPException(status_code=400, detail="INVALID_DISPUTE_OUTCOME")
+    if not (body.reason or "").strip():
+        raise HTTPException(status_code=400, detail="DISPUTE_REASON_REQUIRED")
+
+    tr = await db.trips.find_one({"id": trip_id})
+    if not tr or not tr.get("dispute"):
+        raise HTTPException(status_code=404, detail="Dispute not found")
+    if tr.get("status") != "DISPUTED":
+        # Already resolved or otherwise moved out of DISPUTED — reject
+        raise HTTPException(status_code=409, detail="ALREADY_RESOLVED")
+    if (tr.get("dispute") or {}).get("status") == "RESOLVED":
+        raise HTTPException(status_code=409, detail="ALREADY_RESOLVED")
+
+    now = now_iso()
+    amount = float(tr.get("price", 0) or 0)
+    resolved_payload = {
+        "status": "RESOLVED", "outcome": outcome, "resolution_reason": body.reason,
+        "resolved_by_id": user["id"], "resolved_by_name": user.get("name", ""),
+        "resolved_at": now,
+    }
+
+    if outcome == "RELEASE_TO_DRIVER":
+        # Atomic transition DISPUTED -> COMPLETED. The compound filter guarantees only
+        # the first concurrent request wins; any duplicate request will fail the filter
+        # and see modified_count == 0.
+        claimed = await db.trips.update_one(
+            {"id": trip_id, "status": "DISPUTED", "dispute.status": {"$ne": "RESOLVED"}},
+            {"$set": {
+                "status": "COMPLETED", "customer_confirmed": True,
+                "dispute": {**tr["dispute"], **resolved_payload},
+                "delivered_at": tr.get("delivered_at") or now,
+                "completed_at": now, "updated_at": now,
+            }},
+        )
+        if claimed.modified_count != 1:
+            raise HTTPException(status_code=409, detail="ALREADY_RESOLVED")
+        await db.shipments.update_one({"id": tr["shipment_id"]}, {"$set": {"status": "COMPLETED", "updated_at": now}})
+        fresh = await db.trips.find_one({"id": trip_id}, {"_id": 0})
+        # Reuse the existing settlement helper. It short-circuits if driver_earning
+        # already exists, so it is safe under duplicate calls.
+        await record_trip_completion(fresh)
+        await db.audit_logs.insert_one({
+            "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
+            "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": "admin",
+            "action": "DISPUTE_RESOLVED_RELEASE", "entity": "trip", "entity_id": trip_id,
+            "old_value": {"status": "DISPUTED", "dispute_state": "OPEN"},
+            "new_value": {"status": "COMPLETED", "outcome": outcome, "amount": amount,
+                          "shipment_id": tr.get("shipment_id"), "dispute_id": tr.get("dispute", {}).get("opened_at")},
+            "reason": body.reason, "result": "success", "timestamp": now,
+        })
+        # Notify parties
+        await notify(tr["driver_id"], "dispute_resolved", "تم حل النزاع لصالحك",
+                     "Dispute resolved in your favor", body.reason, body.reason,
+                     entity_type="trip", entity_id=trip_id)
+        await notify(tr["customer_id"], "dispute_resolved", "تم حل النزاع",
+                     "Dispute resolved", body.reason, body.reason,
+                     entity_type="trip", entity_id=trip_id)
+        await _notify_all_admins("dispute_resolved", "تم حل نزاع", "Dispute resolved",
+                                 body.reason, body.reason,
+                                 meta={"trip_id": trip_id, "outcome": outcome})
+        return await db.trips.find_one({"id": trip_id}, {"_id": 0})
+
+    # ---- FULL_REFUND ----
+    # Atomic transition DISPUTED -> REFUNDED.
+    claimed = await db.trips.update_one(
+        {"id": trip_id, "status": "DISPUTED", "dispute.status": {"$ne": "RESOLVED"}},
+        {"$set": {
+            "status": "REFUNDED",
+            "dispute": {**tr["dispute"], **resolved_payload},
+            "refunded_at": now, "updated_at": now,
+        }},
+    )
+    if claimed.modified_count != 1:
+        raise HTTPException(status_code=409, detail="ALREADY_RESOLVED")
+    await db.shipments.update_one({"id": tr["shipment_id"]}, {"$set": {"status": "REFUNDED", "updated_at": now}})
+
+    # Idempotent refund insert: only one refund transaction per trip.
+    s = await get_settings()
+    existing_refund = await db.transactions.find_one({"trip_id": trip_id, "type": "refund"})
+    if not existing_refund:
+        refund_txn = {
+            "id": uid(), "type": "refund",
+            "account_id": tr["customer_id"], "account_role": "customer",
+            "shipment_id": tr.get("shipment_id"), "trip_id": trip_id,
+            "amount": amount, "gross": amount, "commission": 0, "net": amount,
+            "currency": s["currency"], "status": "COMPLETED",
+            "description": f"Dispute full refund for {tr.get('shipment_title','')}",
+            "reason": body.reason,
+            "created_by": user.get("name"), "created_by_id": user["id"], "created_at": now,
+        }
+        await db.transactions.insert_one(refund_txn)
+
+    await db.audit_logs.insert_one({
+        "id": uid(), "admin_id": user["id"], "admin_name": user.get("name", ""),
+        "actor_id": user["id"], "actor_name": user.get("name", ""), "actor_role": "admin",
+        "action": "DISPUTE_RESOLVED_REFUND", "entity": "trip", "entity_id": trip_id,
+        "old_value": {"status": "DISPUTED", "dispute_state": "OPEN"},
+        "new_value": {"status": "REFUNDED", "outcome": outcome, "amount": amount,
+                      "shipment_id": tr.get("shipment_id"), "dispute_id": tr.get("dispute", {}).get("opened_at")},
+        "reason": body.reason, "result": "success", "timestamp": now,
+    })
+    await notify(tr["customer_id"], "dispute_refunded", "تم رد المبلغ بالكامل",
+                 "Full refund issued", body.reason, body.reason,
+                 entity_type="trip", entity_id=trip_id)
+    await notify(tr["driver_id"], "dispute_resolved", "تم حل النزاع",
+                 "Dispute resolved", body.reason, body.reason,
+                 entity_type="trip", entity_id=trip_id)
+    await _notify_all_admins("dispute_resolved", "تم حل نزاع (استرداد)", "Dispute resolved (refund)",
+                             body.reason, body.reason,
+                             meta={"trip_id": trip_id, "outcome": outcome})
+    return await db.trips.find_one({"id": trip_id}, {"_id": 0})
 

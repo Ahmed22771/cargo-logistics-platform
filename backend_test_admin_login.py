@@ -10,7 +10,7 @@ import json
 import sys
 
 # Backend URL from frontend/.env
-BASE_URL = "https://cargo-rbac-security.preview.emergentagent.com/api"
+BASE_URL = "https://cargo-state-check.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 ADMIN_EMAIL = "admin@cargo.om"
@@ -144,7 +144,7 @@ def main():
     test_scenarios = [
         {
             "name": "Desktop - App Preview Origin",
-            "origin": "https://cargo-rbac-security.preview.emergentagent.com",
+            "origin": "https://cargo-state-check.preview.emergentagent.com",
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         },
         {
@@ -154,12 +154,12 @@ def main():
         },
         {
             "name": "Mobile - App Preview Origin",
-            "origin": "https://cargo-rbac-security.preview.emergentagent.com",
+            "origin": "https://cargo-state-check.preview.emergentagent.com",
             "user_agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
         },
         {
             "name": "Mobile - Android",
-            "origin": "https://cargo-rbac-security.preview.emergentagent.com",
+            "origin": "https://cargo-state-check.preview.emergentagent.com",
             "user_agent": "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
         }
     ]

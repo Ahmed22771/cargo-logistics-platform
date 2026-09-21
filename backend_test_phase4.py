@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 
 # Base URL from frontend/.env
-BASE_URL = "https://cargo-rbac-security.preview.emergentagent.com/api"
+BASE_URL = "https://cargo-state-check.preview.emergentagent.com/api"
 
 # Test credentials
 SUPER_ADMIN_EMAIL = "admin@cargo.om"

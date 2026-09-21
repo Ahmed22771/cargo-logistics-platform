@@ -3,7 +3,7 @@
 import requests
 import json
 
-BASE_URL = "https://cargo-rbac-security.preview.emergentagent.com/api"
+BASE_URL = "https://cargo-state-check.preview.emergentagent.com/api"
 
 # Login as driver to upload a document
 resp = requests.post(f"{BASE_URL}/auth/otp/request", json={

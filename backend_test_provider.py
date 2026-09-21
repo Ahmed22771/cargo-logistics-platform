@@ -10,7 +10,7 @@ import json
 from typing import Optional
 
 # Get backend URL from environment
-BACKEND_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://f3a0b183-d308-41de-b545-d511967f3ced.preview.emergentagent.com")
+BACKEND_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://cargo-state-check.preview.emergentagent.com")
 API_BASE = f"{BACKEND_URL}/api"
 
 # Test accounts

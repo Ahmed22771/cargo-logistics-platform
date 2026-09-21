@@ -52,7 +52,7 @@ import requests
 import json
 from datetime import datetime, timedelta, timezone
 
-BASE_URL = os.getenv("REACT_APP_BACKEND_URL", "https://cargo-rbac-security.preview.emergentagent.com")
+BASE_URL = os.getenv("REACT_APP_BACKEND_URL", "https://cargo-state-check.preview.emergentagent.com")
 API_BASE = f"{BASE_URL}/api"
 
 # Test credentials

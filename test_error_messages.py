@@ -3,7 +3,7 @@
 import requests
 import json
 
-BASE_URL = "https://cargo-state-check.preview.emergentagent.com/api"
+BASE_URL = "https://cargo-readiness-om.preview.emergentagent.com/api"
 
 # Login as super admin
 resp = requests.post(f"{BASE_URL}/auth/admin/login", json={

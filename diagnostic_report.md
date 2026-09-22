@@ -1,7 +1,7 @@
 # CARGO Platform - Diagnostic Report
 ## Preview URL Build & Mobile/Desktop Analysis
 
-**Preview URL:** https://cargo-state-check.preview.emergentagent.com  
+**Preview URL:** https://cargo-readiness-om.preview.emergentagent.com  
 **Test Date:** September 19, 2026  
 **Test Type:** Diagnostic-only (NO code modifications)
 

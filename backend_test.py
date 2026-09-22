@@ -9,7 +9,7 @@ import json
 from typing import Dict, Any, Optional
 
 # Base URL from frontend/.env
-BASE_URL = "https://cargo-state-check.preview.emergentagent.com/api"
+BASE_URL = "https://cargo-readiness-om.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 TEST_USERS = {

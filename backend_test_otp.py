@@ -14,7 +14,7 @@ import subprocess
 import re
 
 # BASE_URL = "http://localhost:8001/api"
-BASE_URL = "https://6d1774a7-93f3-4112-a01b-a68cdfddb960.preview.emergentagent.com/api"
+BASE_URL = "https://cargo-readiness-om.preview.emergentagent.com/api"
 
 def log(msg):
     print(f"[TEST] {msg}", flush=True)

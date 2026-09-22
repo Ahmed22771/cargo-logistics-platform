@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta
 
 # Base URL from frontend/.env
-BASE_URL = "https://6d1774a7-93f3-4112-a01b-a68cdfddb960.preview.emergentagent.com/api"
+BASE_URL = "https://cargo-readiness-om.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 ADMIN_EMAIL = "admin@cargo.om"

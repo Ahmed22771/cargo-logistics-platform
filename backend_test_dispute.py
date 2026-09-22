@@ -8,7 +8,7 @@ import sys
 import time
 from typing import Dict, Optional
 
-BASE_URL = "https://6d1774a7-93f3-4112-a01b-a68cdfddb960.preview.emergentagent.com/api"
+BASE_URL = "https://cargo-readiness-om.preview.emergentagent.com/api"
 
 # Test credentials
 ADMIN_EMAIL = "admin@cargo.om"

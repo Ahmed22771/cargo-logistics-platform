@@ -10,7 +10,7 @@ import random
 import logging
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Response, Request
 from pymongo import ReturnDocument
 from starlette.middleware.cors import CORSMiddleware
 
@@ -19,6 +19,7 @@ from auth import (
     hash_password, verify_password, create_access_token,
     get_current_user, require_roles,
 )
+from otp_service import request_otp as otp_service_request, verify_otp_code
 from seed import run_seed
 from models import (
     OtpRequest, OtpVerify, AdminLogin, ProfileUpdate, DocumentSubmit,
@@ -101,28 +102,25 @@ async def root():
     return {"message": "CARGO API running"}
 
 
+def _client_ip(request: Request):
+    """Best-effort client IP for OTP rate limiting (ingress sets X-Forwarded-For)."""
+    fwd = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if fwd:
+        return fwd
+    return request.client.host if request.client else None
+
+
 @api.post("/auth/otp/request")
-async def otp_request(body: OtpRequest):
-    if body.role not in ("customer", "driver", "provider"):
-        raise HTTPException(status_code=400, detail="Invalid role")
-    code = f"{random.randint(0, 999999):06d}"
-    await db.otps.update_one(
-        {"phone": body.phone, "role": body.role},
-        {"$set": {"code": code, "created_at": now_iso()}},
-        upsert=True,
-    )
-    # DEMO MODE: return the OTP code directly (no real SMS provider configured)
-    return {"success": True, "demo_code": code, "demo": True}
+async def otp_request(body: OtpRequest, request: Request):
+    # Thin HTTP adapter — all lifecycle/rate-limit/provider logic lives in otp_service.
+    return await otp_service_request(body.phone, body.role, ip=_client_ip(request))
 
 
 @api.post("/auth/otp/verify")
-async def otp_verify(body: OtpVerify, response: Response):
-    if body.role not in ("customer", "driver", "provider"):
-        raise HTTPException(status_code=400, detail="Invalid role")
-    otp = await db.otps.find_one({"phone": body.phone, "role": body.role})
-    if not otp or otp.get("code") != body.code:
-        raise HTTPException(status_code=400, detail="Invalid or expired code")
-    await db.otps.delete_one({"phone": body.phone, "role": body.role})
+async def otp_verify(body: OtpVerify, response: Response, request: Request):
+    # Validates + consumes the OTP (expiry / single-use / attempt budget / rate limits)
+    # inside otp_service; user/session creation below is unchanged.
+    await verify_otp_code(body.phone, body.role, body.code, ip=_client_ip(request))
 
     user = await db.users.find_one({"phone": body.phone, "role": body.role})
     if not user:

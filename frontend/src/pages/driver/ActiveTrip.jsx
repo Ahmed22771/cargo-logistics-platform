@@ -5,6 +5,7 @@ import { Card, Spinner, PageHeader, EmptyState, Btn, Field, Textarea } from "../
 import { StatusBadge } from "../../components/StatusBadge";
 import { RouteDisplay } from "../../components/RouteDisplay";
 import { StaticRouteMap } from "../../components/MapPicker";
+import { ChatContextButton } from "../../components/ChatWindow";
 import { useI18n } from "../../i18n";
 import api, { apiErr } from "../../lib/api";
 
@@ -105,6 +106,9 @@ export default function ActiveTrip() {
         <StaticRouteMap pickup={trip.pickup_location} delivery={trip.delivery_location} height={220} />
         <div className="mt-4"><RouteDisplay pickup={trip.pickup_location} delivery={trip.delivery_location} /></div>
         <div className="mt-3 text-sm text-slate-500">{t("common.price")}: <span className="font-bold text-[#F1701E]">{trip.price} {t("common.currency")}</span></div>
+        <div className="mt-4 pt-4 border-t border-slate-100">
+          <ChatContextButton tripId={trip.id} basePath="/driver" testId="trip-open-chat" />
+        </div>
       </Card>
 
       <Card>

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Scale, ShieldAlert, ShieldCheck, RotateCcw, Truck, X, AlertTriangle } from "lucide-react";
 import { Card, Btn, Spinner, Field, Textarea } from "../../components/ui-kit";
 import { StatusBadge } from "../../components/StatusBadge";
+import { ChatContextButton } from "../../components/ChatWindow";
 import { useI18n } from "../../i18n";
 import api, { apiErr } from "../../lib/api";
 import { DisputeStatePill, fmtDate } from "./AdminDisputes";
@@ -120,6 +121,8 @@ export default function AdminDisputeDetail() {
         )}
       </div>
 
+      <div className="mb-4"><ChatContextButton tripId={trip.id} basePath="/admin" testId="admin-dispute-open-chat" /></div>
+
       <Card className="mb-4" data-testid="dispute-basic-info">
         <SectionTitle icon={Truck}>{t("disp.basicInfo")}</SectionTitle>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
@@ -206,9 +209,8 @@ export default function AdminDisputeDetail() {
       )}
 
       {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={() => !busy && setModal(false)} />
-          <div className="relative bg-white rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto" data-testid="resolve-modal">
+        <ResolveModalWrapper onClose={() => !busy && setModal(false)}>
+          <div className="relative bg-white rounded-2xl w-full max-w-md p-6 max-h-[90vh] overflow-y-auto my-auto" data-testid="resolve-modal">
             <div className="flex items-center justify-between mb-4">
               <h2 className="font-bold text-lg text-[#16233A]">{t("disp.resolveTitle")}</h2>
               <button onClick={() => !busy && setModal(false)} aria-label={t("common.close")}><X className="w-5 h-5 text-slate-400" /></button>
@@ -254,8 +256,24 @@ export default function AdminDisputeDetail() {
               </div>
             </div>
           </div>
-        </div>
+        </ResolveModalWrapper>
       )}
+    </div>
+  );
+}
+
+function ResolveModalWrapper({ onClose, children }) {
+  // Body scroll lock + viewport-centered dialog so it never appears at the
+  // bottom of a scrolled page.
+  React.useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      {children}
     </div>
   );
 }

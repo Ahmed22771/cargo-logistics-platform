@@ -10,10 +10,17 @@ const TYPES = ["", "customer_payment", "platform_commission", "driver_earning", 
 const REVERSIBLE = ["adjustment", "customer_payment", "driver_earning", "provider_earning", "platform_commission", "refund"];
 
 function Modal({ title, onClose, children, wide }) {
+  // Prevent background scroll and centered on viewport so the dialog is not
+  // pushed to the top of the scrollable main content.
+  React.useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto">
       <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className={`relative bg-white rounded-2xl w-full ${wide ? "max-w-2xl" : "max-w-md"} p-6 max-h-[90vh] overflow-y-auto`} data-testid="fin-modal">
+      <div className={`relative bg-white rounded-2xl w-full ${wide ? "max-w-2xl" : "max-w-md"} p-6 max-h-[90vh] overflow-y-auto my-auto`} data-testid="fin-modal">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-bold text-lg text-[#16233A]">{title}</h2>
           <button onClick={onClose}><X className="w-5 h-5 text-slate-400" /></button>
@@ -160,7 +167,7 @@ export default function AdminFinance() {
               <td className="px-4 py-3 font-mono text-xs">{(x.gross ?? 0).toFixed(3)}</td>
               <td className="px-4 py-3 font-mono text-xs text-[#F1701E]">{(x.commission ?? 0).toFixed(3)}</td>
               <td className="px-4 py-3 font-mono text-xs font-bold">{(x.net ?? 0).toFixed(3)}</td>
-              <td className="px-4 py-3"><span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700">{x.status}</span></td>
+              <td className="px-4 py-3"><span className="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700">{t(`status.${x.status}`) !== `status.${x.status}` ? t(`status.${x.status}`) : x.status}</span></td>
               <td className="px-4 py-3 text-xs text-slate-400 font-mono">{x.created_at ? new Date(x.created_at).toLocaleDateString(lang === "ar" ? "ar-OM" : "en-GB") : "\u2014"}</td>
               <td className="px-4 py-3">{can("finance.reverse") && !x.reversed && x.type !== "reversal" && REVERSIBLE.includes(x.type) && <button data-testid={`txn-reverse-${x.id}`} onClick={() => reverse(x)} title={t("p11.fin.reverse")} className="p-1.5 rounded-lg hover:bg-red-50 text-red-500"><Undo2 className="w-4 h-4" /></button>}</td>
             </tr>

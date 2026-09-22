@@ -4,6 +4,7 @@ import { ArrowLeft, Truck, User, MapPin, Wallet, ShieldCheck } from "lucide-reac
 import { Card, Spinner, PageHeader } from "../../components/ui-kit";
 import { StatusBadge } from "../../components/StatusBadge";
 import { RouteDisplay } from "../../components/RouteDisplay";
+import { ChatContextButton } from "../../components/ChatWindow";
 import { useI18n } from "../../i18n";
 import api from "../../lib/api";
 
@@ -19,6 +20,7 @@ export default function ProviderTripDetail() {
     <div className="min-w-0 overflow-x-hidden">
       <Link to="/provider/trips" className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 mb-4"><ArrowLeft className="w-4 h-4" /> {t("common.back")}</Link>
       <PageHeader title={trip.shipment_title || t("provider.trips")} action={<StatusBadge status={trip.status} />} />
+      <div className="mb-3"><ChatContextButton tripId={trip.id} basePath="/provider" testId="provider-open-chat" /></div>
       <div className="grid gap-4">
         <Card>
           <div className="flex items-center gap-2 mb-3"><MapPin className="w-4 h-4 text-[#F1701E]" /><h3 className="font-bold text-[#16233A]">{t("provider.route")}</h3></div>

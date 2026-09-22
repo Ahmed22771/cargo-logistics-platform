@@ -25,6 +25,10 @@ export function PortalLayout({ navItems, basePath, title, children }) {
     const m = n.meta || {};
     const et = n.entity_type || m.entity_type;
     const shipmentId = m.shipment_id;
+    // Chat notifications deep-link into the conversation regardless of portal.
+    if (n.type === "chat_message" && (m.conversation_id || (et === "conversation" && n.entity_id))) {
+      return `${basePath}/messages/${m.conversation_id || n.entity_id}`;
+    }
     if (basePath === "/customer") {
       if (shipmentId) return `/customer/shipment/${shipmentId}`;
       return "/customer";

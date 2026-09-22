@@ -6,6 +6,7 @@ import { Card, Btn, Spinner, Field, Textarea, Input } from "../../components/ui-
 import { StatusBadge, VerificationBadge } from "../../components/StatusBadge";
 import { RouteDisplay } from "../../components/RouteDisplay";
 import { StaticRouteMap } from "../../components/MapPicker";
+import { ChatContextButton } from "../../components/ChatWindow";
 import { useI18n } from "../../i18n";
 import api, { apiErr } from "../../lib/api";
 
@@ -132,6 +133,11 @@ export default function ShipmentDetail() {
         </div>
         {["DRAFT", "PUBLISHED", "BIDDING"].includes(shipment.status) && (
           <Btn variant="ghost" onClick={cancelShipment} disabled={busy} data-testid="cancel-shipment-btn" className="mt-4 text-red-600 hover:bg-red-50"><Trash2 className="w-4 h-4" /> {t("common.cancel")}</Btn>
+        )}
+        {trip && (
+          <div className="mt-4 pt-4 border-t border-slate-100">
+            <ChatContextButton tripId={trip.id} basePath="/customer" testId="shipment-open-chat" />
+          </div>
         )}
       </Card>
 

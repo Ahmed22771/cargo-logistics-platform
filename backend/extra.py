@@ -1497,3 +1497,251 @@ async def resolve_dispute(trip_id: str, body: DisputeResolveBody,
     """Thin HTTP adapter — all financial/state logic lives in execute_dispute_resolution()."""
     return await execute_dispute_resolution(trip_id, body.outcome, body.reason, user)
 
+
+
+# ==================================================================================
+# CHAT CORE
+# ==================================================================================
+# Design: trip-scoped conversations (one thread per trip) whose participant set is
+# derived from the trip itself (customer + driver + provider if any) plus admins
+# who gain access lazily when a dispute exists OR they hold the chat.access_all
+# permission. Two collections:
+#   * chat_conversations : id, trip_id, shipment_id, dispute_id?, participants[],
+#                          last_message_*, unread_by[user_id]
+#   * chat_messages       : id, conversation_id, sender_id, sender_name, sender_role,
+#                          text, created_at, read_by[user_id]
+# The chat_service functions below (build/authorize/list/create/mark_read) are pure
+# and stateless with respect to HTTP — HTTP routes are thin adapters so a future
+# Go / Node / TypeScript / Java extraction can reuse the exact same contracts and
+# data shapes without touching the customer/driver/provider/admin flows.
+
+
+class ChatSendBody(BaseModel):
+    text: str
+
+
+class ChatContextBody(BaseModel):
+    trip_id: Optional[str] = None
+    shipment_id: Optional[str] = None
+
+
+def _chat_participant(user: dict) -> dict:
+    return {"user_id": user["id"], "role": user["role"],
+            "name": user.get("company_name") or user.get("name") or user["id"]}
+
+
+async def _chat_build_participants_for_trip(trip: dict) -> list:
+    """Derive the authoritative participant set from a trip. Names are looked up
+    at conversation creation time so that later renames don't require re-writes."""
+    ids = [pid for pid in [trip.get("customer_id"), trip.get("driver_id"), trip.get("provider_id")] if pid]
+    users = await db.users.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1, "role": 1, "company_name": 1}).to_list(20)
+    umap = {u["id"]: u for u in users}
+    out = []
+    for pid in ids:
+        u = umap.get(pid)
+        if u:
+            out.append(_chat_participant(u))
+    return out
+
+
+async def _chat_get_or_create_for_trip(trip_id: str, actor: dict) -> dict:
+    """Idempotent conversation resolver. Never creates duplicates for the same trip."""
+    conv = await db.chat_conversations.find_one({"trip_id": trip_id}, {"_id": 0})
+    trip = await db.trips.find_one({"id": trip_id}, {"_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="TRIP_NOT_FOUND")
+    if not await _chat_authorize_trip(actor, trip):
+        raise HTTPException(status_code=403, detail="NOT_A_PARTICIPANT")
+    participants = await _chat_build_participants_for_trip(trip)
+    now = now_iso()
+    if not conv:
+        conv = {
+            "id": uid(), "trip_id": trip_id, "shipment_id": trip.get("shipment_id"),
+            "dispute_id": (trip.get("dispute") or {}).get("opened_at") if trip.get("dispute") else None,
+            "shipment_title": trip.get("shipment_title", ""),
+            "participants": participants, "created_at": now,
+            "last_message_at": None, "last_message_preview": "", "last_message_sender_id": None,
+            "unread_by": {},
+        }
+        await db.chat_conversations.insert_one(dict(conv))
+        conv.pop("_id", None)
+    else:
+        # Keep participants / dispute link fresh without duplicating records.
+        new_dispute = (trip.get("dispute") or {}).get("opened_at") if trip.get("dispute") else None
+        await db.chat_conversations.update_one({"id": conv["id"]}, {"$set": {
+            "participants": participants, "dispute_id": new_dispute,
+            "shipment_id": trip.get("shipment_id"), "shipment_title": trip.get("shipment_title", ""),
+        }})
+        conv["participants"] = participants
+        conv["dispute_id"] = new_dispute
+    return conv
+
+
+async def _chat_authorize_trip(user: dict, trip: dict) -> bool:
+    """Trip-level authorization used both for creation and messaging.
+    Admins get access when the trip has a dispute or when they hold chat.access_all."""
+    if not trip:
+        return False
+    uid_ = user["id"]
+    if uid_ in (trip.get("customer_id"), trip.get("driver_id"), trip.get("provider_id")):
+        return True
+    if user.get("role") == "admin":
+        if trip.get("dispute"):
+            return True
+        perms = set(await get_user_permissions(user))
+        if "chat.access_all" in perms or "disputes.resolve" in perms or user.get("admin_role_key") == "super_admin":
+            return True
+    return False
+
+
+async def _chat_authorize_conversation(user: dict, conv: dict) -> bool:
+    """Conversation-level authorization. The trip is the single source of truth."""
+    if not conv:
+        return False
+    trip = await db.trips.find_one({"id": conv["trip_id"]}, {"_id": 0})
+    return await _chat_authorize_trip(user, trip or {})
+
+
+async def _chat_visible_conversations_for(user: dict) -> list:
+    """Return the conversations the user is authorized to see, sorted by recency."""
+    role = user.get("role")
+    if role == "customer":
+        q = {"participants.user_id": user["id"]}
+    elif role == "driver":
+        q = {"participants.user_id": user["id"]}
+    elif role == "provider":
+        q = {"participants.user_id": user["id"]}
+    elif role == "admin":
+        perms = set(await get_user_permissions(user))
+        if "chat.access_all" in perms or user.get("admin_role_key") == "super_admin":
+            q = {}
+        else:
+            q = {"dispute_id": {"$ne": None}}
+    else:
+        q = {"participants.user_id": user["id"]}
+    return await db.chat_conversations.find(q, {"_id": 0}).sort("last_message_at", -1).to_list(200)
+
+
+async def _chat_send_message(conv: dict, sender: dict, text: str) -> dict:
+    """Append a message and update conversation cache atomically (best-effort).
+    Also fires an in-app notification to every OTHER participant so the existing
+    notification bell surfaces the new message without a separate transport."""
+    text = (text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="MESSAGE_EMPTY")
+    if len(text) > 4000:
+        raise HTTPException(status_code=400, detail="MESSAGE_TOO_LONG")
+    now = now_iso()
+    msg = {
+        "id": uid(), "conversation_id": conv["id"], "sender_id": sender["id"],
+        "sender_name": sender.get("company_name") or sender.get("name") or sender["id"],
+        "sender_role": sender.get("role"),
+        "text": text, "created_at": now,
+        "trip_id": conv.get("trip_id"), "shipment_id": conv.get("shipment_id"),
+        "read_by": [sender["id"]],
+    }
+    await db.chat_messages.insert_one(dict(msg))
+    msg.pop("_id", None)
+    # Update conversation cache. Increment unread counters for every other participant.
+    unread_updates = {f"unread_by.{p['user_id']}": 1
+                      for p in (conv.get("participants") or []) if p["user_id"] != sender["id"]}
+    upd = {"$set": {
+        "last_message_at": now, "last_message_preview": text[:120],
+        "last_message_sender_id": sender["id"], "last_message_sender_name": msg["sender_name"],
+    }}
+    if unread_updates:
+        upd["$inc"] = unread_updates
+    await db.chat_conversations.update_one({"id": conv["id"]}, upd)
+    # Fan-out notifications (reusing existing bell/count system).
+    for p in (conv.get("participants") or []):
+        if p["user_id"] == sender["id"]:
+            continue
+        preview = text if len(text) <= 80 else (text[:77] + "...")
+        await notify(
+            p["user_id"], "chat_message",
+            f"رسالة جديدة من {msg['sender_name']}", f"New message from {msg['sender_name']}",
+            preview, preview,
+            entity_type="conversation", entity_id=conv["id"],
+            meta={"conversation_id": conv["id"], "trip_id": conv.get("trip_id"),
+                  "shipment_id": conv.get("shipment_id")},
+        )
+    return msg
+
+
+async def _chat_mark_read(conv: dict, user: dict) -> None:
+    await db.chat_conversations.update_one({"id": conv["id"]}, {"$set": {f"unread_by.{user['id']}": 0}})
+    await db.chat_messages.update_many(
+        {"conversation_id": conv["id"], "read_by": {"$ne": user["id"]}},
+        {"$addToSet": {"read_by": user["id"]}},
+    )
+
+
+# ---- HTTP adapters -----------------------------------------------------------------
+@extra_api.get("/chat/conversations")
+async def chat_list_conversations(user: dict = Depends(get_current_user)):
+    convs = await _chat_visible_conversations_for(user)
+    for c in convs:
+        c["unread"] = int((c.get("unread_by") or {}).get(user["id"]) or 0)
+        # Peer preview for the conversation list (first non-self participant).
+        peers = [p for p in (c.get("participants") or []) if p["user_id"] != user["id"]]
+        c["peer_name"] = ", ".join(p["name"] for p in peers) if peers else ""
+        c["peer_role"] = peers[0]["role"] if peers else ""
+    return convs
+
+
+@extra_api.post("/chat/conversations/context")
+async def chat_context_conversation(body: ChatContextBody, user: dict = Depends(get_current_user)):
+    """Resolve (or create idempotently) the conversation for a given trip or shipment.
+    Shipments without a trip yet return CHAT_NOT_AVAILABLE — chat is trip-scoped."""
+    trip_id = body.trip_id
+    if not trip_id and body.shipment_id:
+        sh = await db.shipments.find_one({"id": body.shipment_id}, {"_id": 0, "trip_id": 1, "customer_id": 1})
+        if not sh:
+            raise HTTPException(status_code=404, detail="SHIPMENT_NOT_FOUND")
+        if not sh.get("trip_id"):
+            raise HTTPException(status_code=400, detail="CHAT_NOT_AVAILABLE_BEFORE_TRIP")
+        trip_id = sh["trip_id"]
+    if not trip_id:
+        raise HTTPException(status_code=400, detail="TRIP_OR_SHIPMENT_REQUIRED")
+    return await _chat_get_or_create_for_trip(trip_id, user)
+
+
+@extra_api.get("/chat/conversations/{cid}")
+async def chat_get_conversation(cid: str, user: dict = Depends(get_current_user)):
+    conv = await db.chat_conversations.find_one({"id": cid}, {"_id": 0})
+    if not conv or not await _chat_authorize_conversation(user, conv):
+        raise HTTPException(status_code=403, detail="NOT_A_PARTICIPANT")
+    conv["unread"] = int((conv.get("unread_by") or {}).get(user["id"]) or 0)
+    return conv
+
+
+@extra_api.get("/chat/conversations/{cid}/messages")
+async def chat_list_messages(cid: str, after: Optional[str] = None, limit: int = 100,
+                             user: dict = Depends(get_current_user)):
+    conv = await db.chat_conversations.find_one({"id": cid}, {"_id": 0})
+    if not conv or not await _chat_authorize_conversation(user, conv):
+        raise HTTPException(status_code=403, detail="NOT_A_PARTICIPANT")
+    q = {"conversation_id": cid}
+    if after:
+        # Delta polling: transport-agnostic so we can swap to websockets later
+        # without changing the message model or the authorization boundary.
+        q["created_at"] = {"$gt": after}
+    limit = max(1, min(int(limit or 100), 500))
+    return await db.chat_messages.find(q, {"_id": 0}).sort("created_at", 1).to_list(limit)
+
+
+@extra_api.post("/chat/conversations/{cid}/messages")
+async def chat_post_message(cid: str, body: ChatSendBody, user: dict = Depends(get_current_user)):
+    conv = await db.chat_conversations.find_one({"id": cid}, {"_id": 0})
+    if not conv or not await _chat_authorize_conversation(user, conv):
+        raise HTTPException(status_code=403, detail="NOT_A_PARTICIPANT")
+    return await _chat_send_message(conv, user, body.text)
+
+
+@extra_api.post("/chat/conversations/{cid}/read")
+async def chat_mark_read(cid: str, user: dict = Depends(get_current_user)):
+    conv = await db.chat_conversations.find_one({"id": cid}, {"_id": 0})
+    if not conv or not await _chat_authorize_conversation(user, conv):
+        raise HTTPException(status_code=403, detail="NOT_A_PARTICIPANT")
+    await _chat_mark_read(conv, user)
+    return {"success": True}

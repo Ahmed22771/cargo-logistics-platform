@@ -125,7 +125,7 @@ export const translations = {
       LOADED: "تم التحميل", IN_TRANSIT: "قيد النقل", NEAR_DESTINATION: "قرب الوجهة",
       DRIVER_ARRIVED_DESTINATION: "وصل السائق للوجهة", DELIVERED_PENDING_CONFIRMATION: "بانتظار تأكيد التسليم",
       DELIVERED: "تم التسليم", COMPLETED: "مكتملة", CANCELLED: "ملغاة", DISPUTED: "متنازع عليها", REFUNDED: "مستردة",
-      HELD: "محجوز", RELEASED: "مُحرَّر",
+      HELD: "محجوز", RELEASED: "تم تحرير المبلغ",
     },
     disp: {
       title: "النزاعات", subtitle: "مراجعة نزاعات التسليم واتخاذ القرار المالي النهائي",
@@ -154,6 +154,16 @@ export const translations = {
       resolvedSuccess: "تم حل النزاع بنجاح", alreadyResolved: "تم حل هذا النزاع مسبقًا",
       txn_payment_hold: "دفعة محجوزة",
       noProvider: "سائق مستقل",
+    },
+    chat: {
+      title: "المحادثات", subtitle: "محادثاتك مع الأطراف المرتبطة بشحناتك ورحلاتك",
+      open: "محادثة", empty: "لا توجد رسائل بعد", emptySub: "ابدأ الحديث بإرسال أول رسالة",
+      placeholder: "اكتب رسالتك...", send: "إرسال",
+      noThreads: "لا توجد محادثات", noThreadsSub: "ستظهر محادثاتك هنا عند وجود رحلة",
+      accessDenied: "لا يمكنك الوصول إلى هذه المحادثة",
+      you: "أنت", noMessagesYet: "لا رسائل بعد",
+      tripThread: "محادثة رحلة", conversation: "محادثة",
+      notAvailableYet: "المحادثة تصبح متاحة بعد قبول عرض السائق",
     },
     rating: {
       overall: "التقييم العام", serviceQuality: "جودة الخدمة", communication: "التواصل",
@@ -497,6 +507,16 @@ export const translations = {
       resolvedSuccess: "Dispute resolved successfully", alreadyResolved: "This dispute has already been resolved",
       txn_payment_hold: "Payment hold",
       noProvider: "Independent driver",
+    },
+    chat: {
+      title: "Messages", subtitle: "Conversations with the parties on your shipments and trips",
+      open: "Chat", empty: "No messages yet", emptySub: "Start the conversation by sending the first message",
+      placeholder: "Type your message...", send: "Send",
+      noThreads: "No conversations", noThreadsSub: "Your conversations appear here once a trip is active",
+      accessDenied: "You cannot access this conversation",
+      you: "You", noMessagesYet: "No messages yet",
+      tripThread: "Trip conversation", conversation: "Conversation",
+      notAvailableYet: "Chat becomes available once a bid is accepted",
     },
     rating: {
       overall: "Overall rating", serviceQuality: "Service quality", communication: "Communication",

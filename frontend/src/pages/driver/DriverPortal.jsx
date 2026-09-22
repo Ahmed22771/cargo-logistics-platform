@@ -1,7 +1,8 @@
 import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { Home, Package, Gavel, Truck, ShieldCheck, FileText } from "lucide-react";
+import { Home, Package, Gavel, Truck, ShieldCheck, FileText, MessageCircle } from "lucide-react";
 import { PortalLayout } from "../../components/PortalLayout";
+import Messages from "../../components/Messages";
 import DriverHome from "./DriverHome";
 import AvailableShipments from "./AvailableShipments";
 import MyBids from "./MyBids";
@@ -16,6 +17,7 @@ const NAV = [
   { key: "available", to: "/available", label: "nav.availableShipments", icon: Package },
   { key: "bids", to: "/bids", label: "nav.myBids", icon: Gavel },
   { key: "trip", to: "/trip", label: "nav.activeTrip", icon: Truck },
+  { key: "messages", to: "/messages", label: "chat.title", icon: MessageCircle },
   { key: "documents", to: "/documents", label: "nav.documents", icon: FileText },
   { key: "verification", to: "/verification", label: "nav.verification", icon: ShieldCheck },
 ];
@@ -32,6 +34,8 @@ export default function DriverPortal() {
         <Route path="verification" element={<Verification />} />
         <Route path="documents" element={<DriverDocuments />} />
         <Route path="profile" element={<DriverProfile />} />
+        <Route path="messages" element={<Messages basePath="/driver" />} />
+        <Route path="messages/:cid" element={<Messages basePath="/driver" />} />
         <Route path="*" element={<Navigate to="/driver" replace />} />
       </Routes>
     </PortalLayout>

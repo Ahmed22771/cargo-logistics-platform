@@ -1,7 +1,8 @@
 import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { LayoutGrid, Package, Gavel, Truck, Users, Car, Wallet, FileText, Building2 } from "lucide-react";
+import { LayoutGrid, Package, Gavel, Truck, Users, Car, Wallet, FileText, Building2, MessageCircle } from "lucide-react";
 import { PortalLayout } from "../../components/PortalLayout";
+import Messages from "../../components/Messages";
 import ProviderDashboard from "./ProviderDashboard";
 import ProviderAvailable from "./ProviderAvailable";
 import ProviderOffers from "./ProviderOffers";
@@ -20,6 +21,7 @@ const NAV = [
   { key: "available", to: "/available", label: "provider.availableShipments", icon: Package },
   { key: "offers", to: "/offers", label: "provider.offers", icon: Gavel },
   { key: "trips", to: "/trips", label: "provider.trips", icon: Truck },
+  { key: "messages", to: "/messages", label: "chat.title", icon: MessageCircle },
   { key: "vehicles", to: "/vehicles", label: "provider.vehicles", icon: Car },
   { key: "drivers", to: "/drivers", label: "provider.drivers", icon: Users },
   { key: "finance", to: "/finance", label: "provider.finance", icon: Wallet },
@@ -42,6 +44,8 @@ export default function ProviderPortal() {
         <Route path="drivers/:id" element={<ProviderDriverDetail />} />
         <Route path="documents" element={<ProviderDocuments />} />
         <Route path="finance" element={<ProviderFinance />} />
+        <Route path="messages" element={<Messages basePath="/provider" />} />
+        <Route path="messages/:cid" element={<Messages basePath="/provider" />} />
         <Route path="profile" element={<ProviderProfile />} />
         <Route path="*" element={<Navigate to="/provider" replace />} />
       </Routes>

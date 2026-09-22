@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { LayoutDashboard, ShieldCheck, Package, Gavel, Truck, Users, ScrollText, Wallet, KeyRound, FileText } from "lucide-react";
+import { LayoutDashboard, ShieldCheck, Package, Gavel, Truck, Users, ScrollText, Wallet, KeyRound, FileText, Scale } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import { LoadingScreen } from "../../components/ProtectedRoute";
 import api from "../../lib/api";
@@ -16,6 +16,8 @@ import AdminAudit from "./AdminAudit";
 import AdminFinance from "./AdminFinance";
 import AdminAccess from "./AdminAccess";
 import AdminDocuments from "./AdminDocuments";
+import AdminDisputes from "./AdminDisputes";
+import AdminDisputeDetail from "./AdminDisputeDetail";
 
 // perm: null = visible to any admin; otherwise requires that permission
 const NAV = [
@@ -24,6 +26,7 @@ const NAV = [
   { key: "shipments", to: "/shipments", label: "nav.shipments", icon: Package, perm: null },
   { key: "bids", to: "/bids", label: "nav.bids", icon: Gavel, perm: null },
   { key: "trips", to: "/trips", label: "nav.trips", icon: Truck, perm: null },
+  { key: "disputes", to: "/disputes", label: "nav.disputes", icon: Scale, perm: "disputes.view" },
   { key: "documents", to: "/documents", label: "p4.docs.navTitle", icon: FileText, perm: "documents.view" },
   { key: "users", to: "/users", label: "nav.users", icon: Users, perm: "users.view" },
   { key: "finance", to: "/finance", label: "nav.finance", icon: Wallet, perm: "finance.view" },
@@ -55,6 +58,8 @@ export default function AdminPortal() {
         <Route path="shipments" element={<AdminShipments />} />
         <Route path="bids" element={<AdminBids />} />
         <Route path="trips" element={<AdminTrips />} />
+        <Route path="disputes" element={<AdminDisputes />} />
+        <Route path="disputes/:tripId" element={<AdminDisputeDetail />} />
         <Route path="documents" element={<AdminDocuments />} />
         <Route path="users" element={<AdminUsers />} />
         <Route path="finance" element={<AdminFinance />} />

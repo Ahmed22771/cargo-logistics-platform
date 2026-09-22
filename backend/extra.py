@@ -961,6 +961,7 @@ async def create_vehicle(body: VehicleBody, user: dict = Depends(get_current_use
         "capacity": body.capacity or "", "notes": body.notes or "",
         "status": (body.status or "ACTIVE").upper(),
         "assigned_driver_id": body.assigned_driver_id,
+        "regulatory": _normalize_vehicle_regulatory(body.regulatory, None),
         "created_at": now_iso(), "updated_at": now_iso(),
     }
     await db.vehicles.insert_one(doc)
@@ -994,6 +995,10 @@ async def update_vehicle(vid: str, body: VehicleBody, user: dict = Depends(get_c
         "assigned_driver_id": body.assigned_driver_id,
         "updated_at": now_iso(),
     }
+    # Only touch regulatory data when the client actually sends it, so partial
+    # updates from older clients never wipe existing regulatory readiness fields.
+    if body.regulatory is not None:
+        updates["regulatory"] = _normalize_vehicle_regulatory(body.regulatory, v.get("regulatory"))
     await db.vehicles.update_one({"id": vid}, {"$set": updates})
     return await db.vehicles.find_one({"id": vid}, {"_id": 0})
 
@@ -1745,3 +1750,112 @@ async def chat_mark_read(cid: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="NOT_A_PARTICIPANT")
     await _chat_mark_read(conv, user)
     return {"success": True}
+
+
+
+# ==================================================================================
+# REGULATORY READINESS (Oman) — DATA STRUCTURE ONLY
+# ==================================================================================
+# Purpose: let CARGO *store* (a) the platform's Smart Transport Application license,
+# (b) driver licensing data, and (c) vehicle operating-card / barcode readiness — so
+# future Omani regulatory requirements can be accommodated without a rebuild.
+#
+# Explicitly OUT OF SCOPE here (do NOT add): eligibility/compliance engine,
+# block/unblock rules, Naql API integration, real barcode issuance, SMS/GPS/payment.
+# Everything below is additive and backward-compatible: missing fields default to
+# empty, old records without these fields keep working, and no dummy/real license
+# numbers are ever generated. Vehicle documents remain in Unified Documents (the
+# `documents` collection) — these fields only hold identifiers/dates, not files.
+from models import AppLicenseBody, DriverRegulatoryBody  # noqa: E402
+
+APP_LICENSE_ID = "app_license"
+
+DRIVER_REG_KEYS = [
+    "driving_license_number", "license_class", "license_issue_date",
+    "license_expiry_date", "license_status", "driver_training_status",
+    "driver_training_date", "regulatory_notes",
+]
+
+VEHICLE_REG_KEYS = [
+    "chassis_number", "operating_card_number", "operating_card_issue_date",
+    "operating_card_expiry_date", "operating_card_status",
+    "registration_reference", "ownership_reference", "regulatory_notes",
+    # Regulatory identifier / barcode readiness (NOT a real government barcode).
+    "regulatory_identifier", "barcode_value", "barcode_status",
+]
+
+
+def _normalize_vehicle_regulatory(incoming, existing) -> dict:
+    """Return a dict containing exactly the known regulatory keys. Starts from the
+    existing stored block (so unspecified keys are preserved) and overlays any
+    provided keys. Unknown keys in `incoming` are ignored to keep the shape stable
+    for future language/service extraction (stable data contract)."""
+    out = {k: "" for k in VEHICLE_REG_KEYS}
+    if isinstance(existing, dict):
+        for k in VEHICLE_REG_KEYS:
+            if existing.get(k) is not None:
+                out[k] = existing.get(k)
+    if isinstance(incoming, dict):
+        for k in VEHICLE_REG_KEYS:
+            if k in incoming and incoming.get(k) is not None:
+                out[k] = incoming.get(k)
+    return out
+
+
+def _normalize_driver_regulatory(body: DriverRegulatoryBody) -> dict:
+    data = body.model_dump()
+    return {k: (data.get(k) or "") for k in DRIVER_REG_KEYS}
+
+
+async def get_app_license() -> dict:
+    """Lazy singleton, mirrors the get_settings() pattern. Never fabricates a real
+    license number — returns an empty skeleton until an admin fills it in."""
+    doc = await db.settings.find_one({"id": APP_LICENSE_ID}, {"_id": 0})
+    if not doc:
+        doc = {
+            "id": APP_LICENSE_ID, "license_number": "", "license_type": "",
+            "issuing_authority": "", "issue_date": "", "expiry_date": "",
+            "status": "", "document_id": None, "notes": "",
+            "created_at": now_iso(), "updated_at": now_iso(),
+        }
+        await db.settings.insert_one(dict(doc))
+    return doc
+
+
+# ---- Smart Transport Application license (platform-level) ----
+@extra_api.get("/admin/app-license")
+async def read_app_license(user: dict = Depends(require_permission("system.settings"))):
+    return await get_app_license()
+
+
+@extra_api.put("/admin/app-license")
+async def update_app_license(body: AppLicenseBody,
+                             user: dict = Depends(require_permission("system.settings"))):
+    old = await get_app_license()
+    updates = body.model_dump()
+    updates["id"] = APP_LICENSE_ID
+    updates["updated_at"] = now_iso()
+    updates["updated_by"] = user.get("name", "")
+    await db.settings.update_one({"id": APP_LICENSE_ID}, {"$set": updates}, upsert=True)
+    await audit(user, "app_license_updated", "app_license", APP_LICENSE_ID,
+                old={k: old.get(k) for k in updates if k in old}, new=updates)
+    return await get_app_license()
+
+
+# ---- Driver regulatory / licensing data (driver-owned) ----
+@extra_api.get("/driver/regulatory")
+async def read_driver_regulatory(user: dict = Depends(require_roles("driver"))):
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    reg = (fresh or {}).get("regulatory") or {}
+    # Return a full, stable shape even for legacy drivers who never saved it.
+    return {k: (reg.get(k) or "") for k in DRIVER_REG_KEYS}
+
+
+@extra_api.put("/driver/regulatory")
+async def update_driver_regulatory(body: DriverRegulatoryBody,
+                                   user: dict = Depends(require_roles("driver"))):
+    reg = _normalize_driver_regulatory(body)
+    await db.users.update_one({"id": user["id"]},
+                              {"$set": {"regulatory": reg, "updated_at": now_iso()}})
+    fresh = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password_hash": 0})
+    return fresh

@@ -122,6 +122,10 @@ class VehicleBody(BaseModel):
     notes: Optional[str] = ""
     status: Optional[str] = "ACTIVE"  # ACTIVE | INACTIVE | MAINTENANCE
     assigned_driver_id: Optional[str] = None
+    # Regulatory readiness (Oman). Free-form dict normalized server-side into a
+    # known set of keys (operating card / chassis / barcode ...). Optional so old
+    # clients that never send it keep working unchanged.
+    regulatory: Optional[dict] = None
 
 
 class VehicleAssignBody(BaseModel):
@@ -136,4 +140,33 @@ class ProviderBidBody(BaseModel):
     driver_id: str
     price: float
     note: Optional[str] = ""
+
+
+# ================ Regulatory readiness (Oman) ================
+# NOTE: These models ONLY shape data so the platform can *store* regulatory
+# information in future. They do NOT introduce any eligibility / block logic,
+# Naql API integration, or real license issuance. All fields are optional and
+# backward-compatible; absent fields simply remain empty.
+class AppLicenseBody(BaseModel):
+    """Smart Transport Application license (platform-level, single record)."""
+    license_number: Optional[str] = ""
+    license_type: Optional[str] = ""          # e.g. trucks / taxi / buses (per Naql)
+    issuing_authority: Optional[str] = ""
+    issue_date: Optional[str] = ""            # ISO date string
+    expiry_date: Optional[str] = ""           # ISO date string
+    status: Optional[str] = ""                # free-form, e.g. ACTIVE / EXPIRED / PENDING / ""
+    document_id: Optional[str] = None         # -> Unified Documents record when available
+    notes: Optional[str] = ""
+
+
+class DriverRegulatoryBody(BaseModel):
+    """Driver regulatory / licensing data (stored on the driver user document)."""
+    driving_license_number: Optional[str] = ""
+    license_class: Optional[str] = ""
+    license_issue_date: Optional[str] = ""
+    license_expiry_date: Optional[str] = ""
+    license_status: Optional[str] = ""        # free-form, e.g. VALID / EXPIRED / ""
+    driver_training_status: Optional[str] = ""
+    driver_training_date: Optional[str] = ""
+    regulatory_notes: Optional[str] = ""
 

@@ -329,6 +329,12 @@ async def submit_bid(sid: str, body: BidCreate, user: dict = Depends(require_rol
     existing = await db.bids.find_one({"shipment_id": sid, "driver_id": user["id"], "status": "PENDING"})
     if existing:
         raise HTTPException(status_code=400, detail="ALREADY_BID")
+    # Regulatory eligibility gate (confirmed rules only: app license + driver training).
+    from compliance import check_driver_eligibility, log_eligibility_blocked
+    elig = await check_driver_eligibility(user)
+    if not elig["eligible"]:
+        await log_eligibility_blocked(user, "shipment", sid, elig)
+        raise HTTPException(status_code=403, detail={"code": "NOT_ELIGIBLE", "reasons": elig["reasons"]})
     bid = {
         "id": uid(), "shipment_id": sid, "driver_id": user["id"], "driver_name": user.get("name", ""),
         "provider_id": None, "price": body.price, "note": body.note or "", "status": "PENDING",
@@ -377,6 +383,20 @@ async def accept_bid(bid_id: str, user: dict = Depends(require_roles("customer")
     driver = await db.users.find_one({"id": bid["driver_id"]}, {"_id": 0, "password_hash": 0})
     if not driver or driver.get("verification_status") != "APPROVED" or (driver.get("status") or "active").lower() in ("inactive", "suspended"):
         raise HTTPException(status_code=400, detail="Driver is not eligible")
+
+    # Regulatory eligibility re-check at assignment (driver + provider if a company bid).
+    from compliance import check_driver_eligibility, check_provider_eligibility, log_eligibility_blocked
+    elig = await check_driver_eligibility(driver)
+    reasons = list(elig["reasons"])
+    if bid.get("provider_id"):
+        provider = await db.users.find_one({"id": bid["provider_id"]}, {"_id": 0, "password_hash": 0})
+        reasons += (await check_provider_eligibility(provider or {}))["reasons"]
+    # De-duplicate identical reason codes (application gate can appear twice).
+    seen = set()
+    reasons = [r for r in reasons if not (r["code"] in seen or seen.add(r["code"]))]
+    if reasons:
+        await log_eligibility_blocked(user, "shipment", bid["shipment_id"], {"eligible": False, "reasons": reasons})
+        raise HTTPException(status_code=403, detail={"code": "NOT_ELIGIBLE", "reasons": reasons})
 
     trip_id = uid()
     # This conditional update is the acceptance lock: only one request can reserve
@@ -595,6 +615,16 @@ async def update_trip_status(tid: str, body: TripStatusUpdate, user: dict = Depe
     # change that couples payment to the trip state machine.
     if t.get("status") == "DRIVER_ASSIGNED" and (t.get("payment_status") or "NONE") != "HELD":
         raise HTTPException(status_code=400, detail="PAYMENT_REQUIRED")
+
+    # Regulatory eligibility gate at TRIP START only (leaving DRIVER_ASSIGNED). Per the
+    # confirmed policy we do NOT auto-halt an already-running trip if a document later
+    # expires — mid-trip statuses are recorded/shown for admin, not auto-blocked here.
+    if t.get("status") == "DRIVER_ASSIGNED":
+        from compliance import check_trip_eligibility, log_eligibility_blocked
+        trip_elig = await check_trip_eligibility(t)
+        if not trip_elig["eligible"]:
+            await log_eligibility_blocked(user, "trip", tid, trip_elig)
+            raise HTTPException(status_code=403, detail={"code": "NOT_ELIGIBLE", "reasons": trip_elig["reasons"]})
 
     # Phase 5A: Proof of Delivery is REQUIRED to reach DELIVERED_PENDING_CONFIRMATION
     updates = {"status": body.status, "updated_at": now_iso()}
@@ -942,8 +972,10 @@ async def admin_audit(user: dict = Depends(require_roles("admin"))):
 
 
 from extra import extra_api
+from regulatory_core import reg_router
 app.include_router(api)
 app.include_router(extra_api)
+app.include_router(reg_router)
 
 app.add_middleware(
     CORSMiddleware,

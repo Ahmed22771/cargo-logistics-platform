@@ -1125,6 +1125,15 @@ async def provider_submit_bid(sid: str, body: ProviderBidBody, user: dict = Depe
         raise HTTPException(status_code=400, detail="DRIVER_NOT_APPROVED")
     if (drv.get("status") or "active").lower() in ("inactive", "suspended", "disabled"):
         raise HTTPException(status_code=400, detail="DRIVER_INACTIVE")
+    # Regulatory eligibility gate: provider (carrier license) + driver (app training) + app license.
+    from compliance import check_provider_eligibility, check_driver_eligibility, log_eligibility_blocked
+    pe = await check_provider_eligibility(user)
+    de = await check_driver_eligibility(drv)
+    seen = set()
+    reasons = [r for r in (pe["reasons"] + de["reasons"]) if not (r["code"] in seen or seen.add(r["code"]))]
+    if reasons:
+        await log_eligibility_blocked(user, "shipment", sid, {"eligible": False, "reasons": reasons})
+        raise HTTPException(status_code=403, detail={"code": "NOT_ELIGIBLE", "reasons": reasons})
     s = await db.shipments.find_one({"id": sid})
     if not s or s.get("status") not in ("PUBLISHED", "BIDDING"):
         raise HTTPException(status_code=400, detail="Shipment not open for bids")

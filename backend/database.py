@@ -21,4 +21,7 @@ async def ensure_indexes():
     await db.vehicles.create_index([("owner_id", 1), ("plate_number", 1)], unique=True)
     await db.vehicles.create_index("owner_id")
     await db.users.create_index("company_id")
+    # One transport document per trip.
+    await db.transport_documents.create_index("trip_id", unique=True)
+    await db.transport_documents.create_index("status")
 

@@ -203,6 +203,39 @@ async def seed_phase11():
         await db.settings.insert_one({"id": "platform", "commission_type": "percentage", "commission_value": 10, "currency": "OMR"})
 
 
+async def seed_regulatory_dev():
+    """DEV-only regulatory seed so the demo stays ELIGIBLE. Uses TEST status flags
+    ONLY — never fabricates realistic government license numbers. Idempotent."""
+    # CARGO application license: default ACTIVE in dev (empty number, clearly marked).
+    lic = await db.settings.find_one({"id": "app_license"})
+    if not lic:
+        await db.settings.insert_one({
+            "id": "app_license", "license_number": "", "license_type": "trucks",
+            "issuing_authority": "MTCIT / Naql (DEV placeholder)", "issue_date": "", "expiry_date": "",
+            "status": "ACTIVE", "document_id": None,
+            "notes": "DEV/TEST placeholder — not an official license", "seeded_dev": True,
+            "created_at": now_iso(), "updated_at": now_iso(),
+        })
+    elif not (lic.get("status") or "").strip():
+        await db.settings.update_one({"id": "app_license"},
+                                     {"$set": {"status": "ACTIVE", "updated_at": now_iso()}})
+    # Approved demo drivers: mark application training COMPLETED so they remain eligible.
+    for phone in ("+96890000002", "+96890000003"):
+        u = await db.users.find_one({"phone": phone, "role": "driver"})
+        if u:
+            reg = dict(u.get("regulatory") or {})
+            if (reg.get("driver_training_status") or "").upper() != "COMPLETED":
+                reg["driver_training_status"] = "COMPLETED"
+                reg.setdefault("driver_training_date", "2025-01-01")
+                await db.users.update_one({"id": u["id"]}, {"$set": {"regulatory": reg}})
+    # Demo provider: carrier license ACTIVE (TEST flag, no fake number).
+    p = await db.users.find_one({"phone": "+96890000005", "role": "provider"})
+    if p and not ((p.get("carrier_license") or {}).get("status")):
+        await db.users.update_one({"id": p["id"]}, {"$set": {"carrier_license": {
+            "number": "", "status": "ACTIVE", "expiry_date": "",
+            "issuing_authority": "MTCIT / Naql (DEV placeholder)"}}})
+
+
 async def migrate_legacy_documents():
     """Phase 4: idempotent, non-destructive migration of legacy users.documents[] into the
     top-level `documents` collection. Runs once (guarded by a marker in settings) unless the
@@ -281,4 +314,5 @@ async def run_seed():
     await seed_users()
     await seed_shipments()
     await seed_phase11()
+    await seed_regulatory_dev()
     await migrate_legacy_documents()

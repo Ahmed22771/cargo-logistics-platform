@@ -30,6 +30,7 @@ PERMISSIONS = [
     "reports.view", "reports.export",
     "system.settings", "system.roles", "system.permissions", "system.audit",
     "disputes.view", "disputes.resolve",
+    "privacy.view", "privacy.manage", "privacy.requests", "privacy.breaches", "privacy.ropa",
 ]
 
 

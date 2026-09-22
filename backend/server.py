@@ -973,9 +973,11 @@ async def admin_audit(user: dict = Depends(require_roles("admin"))):
 
 from extra import extra_api
 from regulatory_core import reg_router
+from privacy import privacy_router
 app.include_router(api)
 app.include_router(extra_api)
 app.include_router(reg_router)
+app.include_router(privacy_router)
 
 app.add_middleware(
     CORSMiddleware,

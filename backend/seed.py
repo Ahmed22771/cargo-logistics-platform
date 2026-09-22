@@ -316,3 +316,5 @@ async def run_seed():
     await seed_phase11()
     await seed_regulatory_dev()
     await migrate_legacy_documents()
+    from privacy import seed_privacy_governance
+    await seed_privacy_governance()

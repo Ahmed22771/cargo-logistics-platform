@@ -17,9 +17,12 @@ from starlette.middleware.cors import CORSMiddleware
 from database import db, ensure_indexes
 from auth import (
     hash_password, verify_password, create_access_token,
-    get_current_user, require_roles,
+    get_current_user, require_roles, validate_secrets,
 )
-from otp_service import request_otp as otp_service_request, verify_otp_code
+from otp_service import (
+    request_otp as otp_service_request, verify_otp_code,
+    validate_otp_security, is_production as _otp_is_production,
+)
 from seed import run_seed
 from models import (
     OtpRequest, OtpVerify, AdminLogin, ProfileUpdate, DocumentSubmit,
@@ -367,7 +370,17 @@ async def shipment_bids(sid: str, user: dict = Depends(get_current_user)):
     s = await db.shipments.find_one({"id": sid})
     if not s:
         raise HTTPException(status_code=404, detail="Shipment not found")
-    if user["role"] == "customer" and s["customer_id"] != user["id"]:
+    role = user.get("role")
+    if role == "admin":
+        # Admins may view bids per their existing admin permissions.
+        pass
+    elif role == "customer":
+        # A customer may only view bids on their own shipment.
+        if s["customer_id"] != user["id"]:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    else:
+        # Drivers/providers must not enumerate competitors' bids on shipments
+        # they don't own. They use /driver/bids and /provider/bids for their own.
         raise HTTPException(status_code=403, detail="Forbidden")
     bids = await db.bids.find({"shipment_id": sid}, {"_id": 0}).sort("price", 1).to_list(500)
     return bids
@@ -979,10 +992,27 @@ app.include_router(extra_api)
 app.include_router(reg_router)
 app.include_router(privacy_router)
 
+def _cors_allowed_origins() -> list:
+    """Resolve allowed CORS origins.
+
+    Production: explicit origins only — any '*' wildcard is stripped (fail
+    closed). Development/preview: falls back to '*' so local work keeps running.
+    Prefers CORS_ALLOWED_ORIGINS, with legacy CORS_ORIGINS as a fallback.
+    """
+    raw = os.environ.get("CORS_ALLOWED_ORIGINS")
+    if raw is None:
+        raw = os.environ.get("CORS_ORIGINS", "")
+    origins = [o.strip() for o in raw.split(",") if o.strip()]
+    if _otp_is_production():
+        return [o for o in origins if o != "*"]
+    return origins or ["*"]
+
+
+_cors_origins = _cors_allowed_origins()
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -990,6 +1020,10 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
+    # Fail-closed security guards: refuse to boot production with an unsafe
+    # OTP configuration or default/weak secrets.
+    validate_otp_security()
+    validate_secrets()
     await ensure_indexes()
     await run_seed()
     logger.info("CARGO backend ready")

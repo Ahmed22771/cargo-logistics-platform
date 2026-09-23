@@ -2,7 +2,7 @@
 """CARGO OTP Service Backend Tests — Phase: OTP Service layer + rate limiting + lifecycle
 
 Tests the NEW backend/otp_service.py provider-agnostic OTP layer.
-Base URL: https://cargo-readiness-om.preview.emergentagent.com/api
+Base URL: https://hardened-cargo.preview.emergentagent.com/api
 
 CRITICAL: Use a DIFFERENT phone number per test case to avoid rate limit collisions.
 """
@@ -11,7 +11,7 @@ import requests
 import time
 import sys
 
-BASE_URL = "https://cargo-readiness-om.preview.emergentagent.com/api"
+BASE_URL = "https://hardened-cargo.preview.emergentagent.com/api"
 
 # Use a session for connection pooling
 session = requests.Session()

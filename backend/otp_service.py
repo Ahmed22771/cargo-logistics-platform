@@ -43,12 +43,48 @@ def _cfg_int(name: str, default: int) -> int:
         return default
 
 
+def app_env() -> str:
+    return (os.environ.get("APP_ENV") or "development").strip().lower()
+
+
+def is_production() -> bool:
+    return app_env() in ("production", "prod")
+
+
 def otp_provider_name() -> str:
     return (os.environ.get("OTP_PROVIDER") or "demo").strip().lower()
 
 
+def _env_flag(name: str, default: str) -> bool:
+    return (os.environ.get(name) or default).strip().lower() in ("1", "true", "yes", "on")
+
+
 def otp_demo_expose_code() -> bool:
-    return (os.environ.get("OTP_DEMO_EXPOSE_CODE") or "true").strip().lower() in ("1", "true", "yes", "on")
+    # The demo code may only ever be surfaced in a non-production environment.
+    # In production this ALWAYS returns False regardless of the env flag, so the
+    # raw OTP can never leak through an API response even if misconfigured.
+    if is_production():
+        return False
+    return _env_flag("OTP_DEMO_EXPOSE_CODE", "true")
+
+
+def validate_otp_security() -> None:
+    """Fail-closed startup guard for OTP configuration.
+
+    Production MUST NOT run the demo provider and MUST NOT expose OTP codes.
+    Raising here stops the service from booting with an unsafe configuration
+    (rather than silently leaking codes at runtime)."""
+    if not is_production():
+        return
+    if otp_provider_name() == "demo":
+        raise RuntimeError(
+            "INSECURE_OTP_CONFIG: OTP_PROVIDER=demo is not allowed in production. "
+            "Configure a real OTP provider before deploying to production."
+        )
+    if _env_flag("OTP_DEMO_EXPOSE_CODE", "false"):
+        raise RuntimeError(
+            "INSECURE_OTP_CONFIG: OTP_DEMO_EXPOSE_CODE=true is not allowed in production."
+        )
 
 
 def otp_ttl_seconds() -> int:
@@ -156,7 +192,12 @@ def register_otp_provider(provider: BaseOtpProvider) -> None:
 
 
 def get_otp_provider() -> BaseOtpProvider:
-    p = _PROVIDERS.get(otp_provider_name())
+    name = otp_provider_name()
+    if is_production() and name == "demo":
+        # Defense in depth: even if the startup guard was bypassed, refuse to
+        # deliver OTPs via the demo provider in production (fail closed).
+        raise HTTPException(status_code=500, detail="OTP_PROVIDER_NOT_CONFIGURED")
+    p = _PROVIDERS.get(name)
     if not p:
         # Fail closed: never silently fall back to demo — that would leak codes
         # in an environment that believes a real provider is active.

@@ -15,7 +15,7 @@ import sys
 from typing import Dict, Any, Optional
 
 # Backend URL from frontend/.env
-BASE_URL = "https://cargo-readiness-om.preview.emergentagent.com/api"
+BASE_URL = "https://hardened-cargo.preview.emergentagent.com/api"
 
 # Test credentials
 ADMIN_EMAIL = "admin@cargo.om"

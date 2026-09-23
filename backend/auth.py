@@ -13,6 +13,58 @@ def get_jwt_secret() -> str:
     return os.environ["JWT_SECRET"]
 
 
+def _app_env() -> str:
+    return (os.environ.get("APP_ENV") or "development").strip().lower()
+
+
+def _is_production() -> bool:
+    return _app_env() in ("production", "prod")
+
+
+# Known weak / placeholder values that must never protect a production system.
+_WEAK_ADMIN_PASSWORDS = {
+    "admin123", "admin", "password", "passw0rd", "changeme",
+    "secret", "123456", "cargo123", "admin@123", "test",
+}
+_WEAK_JWT_SECRETS = {
+    "secret", "changeme", "dev", "development", "jwt_secret",
+    "your-secret-key", "your-256-bit-secret", "supersecret", "cargo",
+    "change-me", "test", "password",
+}
+
+
+def validate_secrets() -> None:
+    """Fail-closed startup guard for production secrets.
+
+    Prevents booting production with default/weak credentials. Never logs or
+    echoes the actual secret values — only reports which variable is unsafe.
+    """
+    if not _is_production():
+        return
+
+    admin_password = os.environ.get("ADMIN_PASSWORD", "")
+    if not admin_password or admin_password.strip().lower() in _WEAK_ADMIN_PASSWORDS:
+        raise RuntimeError(
+            "INSECURE_SECRET: ADMIN_PASSWORD is missing or a known-weak value; "
+            "set a strong ADMIN_PASSWORD before running in production."
+        )
+    if len(admin_password) < 12:
+        raise RuntimeError(
+            "INSECURE_SECRET: ADMIN_PASSWORD must be at least 12 characters in production."
+        )
+
+    jwt_secret = os.environ.get("JWT_SECRET", "")
+    if not jwt_secret or jwt_secret.strip().lower() in _WEAK_JWT_SECRETS:
+        raise RuntimeError(
+            "INSECURE_SECRET: JWT_SECRET is missing or a known-weak value; "
+            "set a strong random JWT_SECRET before running in production."
+        )
+    if len(jwt_secret) < 32:
+        raise RuntimeError(
+            "INSECURE_SECRET: JWT_SECRET must be at least 32 characters in production."
+        )
+
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 

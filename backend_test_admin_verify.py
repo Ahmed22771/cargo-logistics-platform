@@ -13,7 +13,7 @@ import sys
 import os
 
 # Get backend URL from environment
-BACKEND_URL = "https://cargo-readiness-om.preview.emergentagent.com/api"
+BACKEND_URL = "https://hardened-cargo.preview.emergentagent.com/api"
 
 def test_admin_login():
     """Test admin login with admin@cargo.om / admin123"""

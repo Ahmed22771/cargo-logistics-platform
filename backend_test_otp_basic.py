@@ -2,14 +2,14 @@
 """CARGO OTP Service Backend Tests — Comprehensive test suite
 
 Tests the NEW backend/otp_service.py provider-agnostic OTP layer.
-Base URL: https://cargo-readiness-om.preview.emergentagent.com/api
+Base URL: https://hardened-cargo.preview.emergentagent.com/api
 """
 
 import requests
 import time
 import sys
 
-BASE_URL = "https://cargo-readiness-om.preview.emergentagent.com/api"
+BASE_URL = "https://hardened-cargo.preview.emergentagent.com/api"
 
 def log(msg):
     print(f"[TEST] {msg}")

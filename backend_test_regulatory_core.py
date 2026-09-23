@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timedelta
 
 # Get base URL from frontend .env
-BASE_URL = "https://06e06483-77fb-4d0b-98ef-6858f2868e3e.preview.emergentagent.com/api"
+BASE_URL = "https://hardened-cargo.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 ADMIN_EMAIL = "admin@cargo.om"

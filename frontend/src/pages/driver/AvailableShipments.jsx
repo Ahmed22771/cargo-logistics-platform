@@ -7,7 +7,7 @@ import { RouteDisplay } from "../../components/RouteDisplay";
 import { VerificationBanner } from "./VerificationBanner";
 import { useI18n } from "../../i18n";
 import { useAuth } from "../../context/AuthContext";
-import api, { apiErr } from "../../lib/api";
+import api, { apiErr, eligibilityError } from "../../lib/api";
 
 function BidModal({ shipment, onClose, onSubmitted }) {
   const { t } = useI18n();
@@ -20,7 +20,18 @@ function BidModal({ shipment, onClose, onSubmitted }) {
     if (!p || p <= 0) { toast.error(t("bid.priceRequired")); return; }
     setBusy(true);
     try { await api.post(`/shipments/${shipment.id}/bids`, { price: p, note }); toast.success(t("bid.submitted")); onSubmitted(); }
-    catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
+    catch (e) {
+      const elig = eligibilityError(e);
+      if (elig) {
+        const detail = (elig.reasons || [])
+          .map((r) => t(`bid.eligibilityReasons.${r?.code}`, r?.message || ""))
+          .filter(Boolean)
+          .join(" • ");
+        toast.error(detail ? `${t("bid.notEligible")}: ${detail}` : t("bid.notEligible"));
+      } else {
+        toast.error(apiErr(e));
+      }
+    } finally { setBusy(false); }
   };
   return (
     <div

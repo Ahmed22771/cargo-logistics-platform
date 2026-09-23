@@ -219,15 +219,19 @@ async def seed_regulatory_dev():
     elif not (lic.get("status") or "").strip():
         await db.settings.update_one({"id": "app_license"},
                                      {"$set": {"status": "ACTIVE", "updated_at": now_iso()}})
-    # Approved demo drivers: mark application training COMPLETED so they remain eligible.
-    for phone in ("+96890000002", "+96890000003"):
-        u = await db.users.find_one({"phone": phone, "role": "driver"})
-        if u:
-            reg = dict(u.get("regulatory") or {})
-            if (reg.get("driver_training_status") or "").upper() != "COMPLETED":
-                reg["driver_training_status"] = "COMPLETED"
-                reg.setdefault("driver_training_date", "2025-01-01")
-                await db.users.update_one({"id": u["id"]}, {"$set": {"regulatory": reg}})
+    # Approved demo drivers: mark application training COMPLETED so they remain
+    # eligible. This is a TEST flag only (never a government credential/number).
+    # Scoped to demo driver accounts and applied to ANY of them already APPROVED,
+    # so an approved demo driver is never stuck VERIFIED-but-NOT_ELIGIBLE purely
+    # because their demo training record was missing. Idempotent.
+    demo_phones = [d["phone"] for d in DEMO_DRIVERS]
+    async for u in db.users.find({"role": "driver", "phone": {"$in": demo_phones},
+                                  "verification_status": "APPROVED"}):
+        reg = dict(u.get("regulatory") or {})
+        if (reg.get("driver_training_status") or "").upper() != "COMPLETED":
+            reg["driver_training_status"] = "COMPLETED"
+            reg.setdefault("driver_training_date", "2025-01-01")
+            await db.users.update_one({"id": u["id"]}, {"$set": {"regulatory": reg}})
     # Demo provider: carrier license ACTIVE (TEST flag, no fake number).
     p = await db.users.find_one({"phone": "+96890000005", "role": "provider"})
     if p and not ((p.get("carrier_license") or {}).get("status")):

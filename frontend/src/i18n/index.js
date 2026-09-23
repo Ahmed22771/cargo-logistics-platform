@@ -13,6 +13,9 @@ export const translations = {
       required: "مطلوب", optional: "اختياري", km: "كم", from: "من", to: "إلى",
       accept: "قبول", reject: "رفض", all: "الكل", yes: "نعم", no: "لا", success: "تم بنجاح",
       error: "حدث خطأ", retry: "إعادة المحاولة", welcome: "مرحباً",
+      personalInfo: "المعلومات الشخصية", vehicleInfo: "معلومات المركبة",
+      email: "البريد الإلكتروني", vehicleType: "نوع المركبة",
+      noVehicle: "لا توجد مركبة مرتبطة", notProvided: "غير محدد",
     },
     nav: {
       about: "من نحن", howItWorks: "كيف تعمل", services: "الخدمات", contact: "تواصل معنا",
@@ -90,6 +93,19 @@ export const translations = {
       compare: "مقارنة العروض", pending: "قيد الانتظار", won: "مقبول", lost: "غير مقبول",
       alreadyBid: "لقد قدمت عرضاً على هذه الشحنة", enterPrice: "أدخل قيمة عرضك بالريال العماني",
       notApproved: "يجب توثيق حسابك قبل المشاركة في العروض",
+      notEligible: "لا يمكنك تقديم العرض حالياً لأن متطلبات الأهلية التنظيمية غير مكتملة",
+      eligibilityReasons: {
+        DRIVER_APP_TRAINING_NOT_COMPLETED: "لم يكتمل تدريب تطبيق السائق",
+        APPLICATION_LICENSE_EXPIRED: "ترخيص التطبيق منتهي الصلاحية",
+        APPLICATION_LICENSE_SUSPENDED: "ترخيص التطبيق موقوف",
+        APPLICATION_LICENSE_INACTIVE: "ترخيص التطبيق غير مفعّل",
+        VEHICLE_OPERATING_CARD_EXPIRED: "بطاقة تشغيل المركبة منتهية الصلاحية",
+        VEHICLE_OPERATING_CARD_SUSPENDED: "بطاقة تشغيل المركبة موقوفة",
+        VEHICLE_OPERATING_CARD_INACTIVE: "بطاقة تشغيل المركبة غير مفعّلة",
+        CARRIER_LICENSE_EXPIRED: "ترخيص الناقل منتهي الصلاحية",
+        CARRIER_LICENSE_SUSPENDED: "ترخيص الناقل موقوف",
+        CARRIER_LICENSE_INACTIVE: "ترخيص الناقل غير مفعّل",
+      },
     },
     trip: {
       active: "الرحلة النشطة", noActive: "لا توجد رحلة نشطة حالياً", updateStatus: "تحديث الحالة",
@@ -366,6 +382,9 @@ export const translations = {
       required: "Required", optional: "Optional", km: "km", from: "From", to: "To",
       accept: "Accept", reject: "Reject", all: "All", yes: "Yes", no: "No", success: "Success",
       error: "An error occurred", retry: "Retry", welcome: "Welcome",
+      personalInfo: "Personal information", vehicleInfo: "Vehicle information",
+      email: "Email", vehicleType: "Vehicle type",
+      noVehicle: "No linked vehicle", notProvided: "Not provided",
     },
     nav: {
       about: "About", howItWorks: "How it Works", services: "Services", contact: "Contact",
@@ -443,6 +462,19 @@ export const translations = {
       compare: "Compare Bids", pending: "Pending", won: "Accepted", lost: "Not accepted",
       alreadyBid: "You already bid on this shipment", enterPrice: "Enter your bid amount in OMR",
       notApproved: "Your account must be verified before bidding",
+      notEligible: "You are not currently eligible to submit a bid. Regulatory requirements are incomplete",
+      eligibilityReasons: {
+        DRIVER_APP_TRAINING_NOT_COMPLETED: "Driver app training is not completed",
+        APPLICATION_LICENSE_EXPIRED: "Application license has expired",
+        APPLICATION_LICENSE_SUSPENDED: "Application license is suspended",
+        APPLICATION_LICENSE_INACTIVE: "Application license is inactive",
+        VEHICLE_OPERATING_CARD_EXPIRED: "Vehicle operating card has expired",
+        VEHICLE_OPERATING_CARD_SUSPENDED: "Vehicle operating card is suspended",
+        VEHICLE_OPERATING_CARD_INACTIVE: "Vehicle operating card is inactive",
+        CARRIER_LICENSE_EXPIRED: "Carrier license has expired",
+        CARRIER_LICENSE_SUSPENDED: "Carrier license is suspended",
+        CARRIER_LICENSE_INACTIVE: "Carrier license is inactive",
+      },
     },
     trip: {
       active: "Active Trip", noActive: "No active trip right now", updateStatus: "Update Status",
@@ -727,14 +759,15 @@ export function I18nProvider({ children }) {
     setLangState(l);
   }, []);
 
-  const t = useCallback((key) => {
+  const t = useCallback((key, fallback) => {
     const parts = key.split(".");
     let cur = translations[lang];
     for (const p of parts) {
-      if (cur == null) return key;
+      if (cur == null) break;
       cur = cur[p];
     }
-    return cur == null ? key : cur;
+    if (cur == null) return fallback != null ? fallback : key;
+    return cur;
   }, [lang]);
 
   const dir = lang === "ar" ? "rtl" : "ltr";

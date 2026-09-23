@@ -1,6 +1,6 @@
 import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
-import { Home, Package, Gavel, Truck, ShieldCheck, FileText, MessageCircle } from "lucide-react";
+import { Home, Package, Gavel, Truck, ShieldCheck, FileText, MessageCircle, User } from "lucide-react";
 import { PortalLayout } from "../../components/PortalLayout";
 import Messages from "../../components/Messages";
 import DriverHome from "./DriverHome";
@@ -20,6 +20,7 @@ const NAV = [
   { key: "messages", to: "/messages", label: "chat.title", icon: MessageCircle },
   { key: "documents", to: "/documents", label: "nav.documents", icon: FileText },
   { key: "verification", to: "/verification", label: "nav.verification", icon: ShieldCheck },
+  { key: "profile", to: "/profile", label: "common.profile", icon: User },
 ];
 
 export default function DriverPortal() {

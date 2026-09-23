@@ -4,6 +4,7 @@ import { Package, Search, Gavel, X, AlertCircle } from "lucide-react";
 import { Card, Btn, Field, Input, Textarea, Spinner, EmptyState, PageHeader } from "../../components/ui-kit";
 import { StatusBadge } from "../../components/StatusBadge";
 import { RouteInline } from "../../components/RouteDisplay";
+import { vehicleTypeLabel } from "../../lib/vehicleTypes";
 import { useI18n } from "../../i18n";
 import api, { apiErr } from "../../lib/api";
 
@@ -24,7 +25,13 @@ function BidModal({ shipment, drivers, onClose, onSubmitted }) {
       toast.success(t("common.success"));
       onSubmitted && onSubmitted();
       onClose();
-    } catch (e) { toast.error(apiErr(e)); } finally { setBusy(false); }
+    } catch (e) {
+      if (e?.response?.data?.detail?.code === "BID_EXCEEDS_MAX_OFFER") {
+        toast.error(t("bid.exceedsMaxOffer"));
+      } else {
+        toast.error(apiErr(e));
+      }
+    } finally { setBusy(false); }
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="provider-bid-modal">
@@ -118,8 +125,13 @@ export default function ProviderAvailable() {
                 <RouteInline pickup={s.pickup_location} delivery={s.delivery_location} />
                 <div className="flex flex-wrap gap-2 mt-3 text-xs text-slate-500">
                   {s.pickup_date && <span>{t("common.date")}: {s.pickup_date}</span>}
-                  {s.vehicle_type && <span>{t("provider.vehicleType")}: {s.vehicle_type}</span>}
-                  {s.expected_price && <span>{t("common.price")}: {s.expected_price} {t("common.currency")}</span>}
+                  {s.vehicle_type && <span>{t("provider.vehicleType")}: {vehicleTypeLabel(t, s.vehicle_type)}</span>}
+                  {s.customer_max_offer != null && (
+                    <span className="font-semibold text-[#F1701E]" data-testid={`prov-max-offer-${s.id}`}>{t("shipment.customerMaxOffer")}: {s.customer_max_offer} {s.pricing_currency || t("common.currency")}</span>
+                  )}
+                  {s.advisory_price != null && (
+                    <span>{t("shipment.advisoryPrice")}: {s.advisory_price} {s.pricing_currency || t("common.currency")}</span>
+                  )}
                 </div>
                 <div className="mt-3">
                   {alreadyBid ? (

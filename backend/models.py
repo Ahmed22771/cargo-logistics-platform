@@ -69,7 +69,17 @@ class ShipmentCreate(BaseModel):
     unloading_service: Optional[bool] = False
     special_instructions: Optional[str] = ""
     expected_price: Optional[str] = ""
+    customer_max_offer: Optional[float] = None
     status: Optional[str] = "DRAFT"  # DRAFT or PUBLISHED
+
+
+class PricingQuoteBody(BaseModel):
+    pickup_location: Optional[Location] = None
+    delivery_location: Optional[Location] = None
+    vehicle_type: Optional[str] = ""
+    fragile: Optional[bool] = False
+    loading_service: Optional[bool] = False
+    unloading_service: Optional[bool] = False
 
 
 class BidCreate(BaseModel):

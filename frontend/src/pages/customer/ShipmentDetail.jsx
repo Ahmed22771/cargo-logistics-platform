@@ -5,6 +5,7 @@ import { ArrowLeft, Star, Truck, CheckCircle2, Package, Info, Trash2, ShieldAler
 import { Card, Btn, Spinner, Field, Textarea, Input } from "../../components/ui-kit";
 import { StatusBadge, VerificationBadge } from "../../components/StatusBadge";
 import { RouteDisplay } from "../../components/RouteDisplay";
+import { vehicleTypeLabel } from "../../lib/vehicleTypes";
 import { StaticRouteMap } from "../../components/MapPicker";
 import { ChatContextButton } from "../../components/ChatWindow";
 import { useI18n } from "../../i18n";
@@ -127,7 +128,7 @@ export default function ShipmentDetail() {
         <StaticRouteMap pickup={shipment.pickup_location} delivery={shipment.delivery_location} height={220} />
         <div className="mt-4"><RouteDisplay pickup={shipment.pickup_location} delivery={shipment.delivery_location} /></div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4 text-sm">
-          {[[t("shipment.category"), shipment.category], [t("shipment.weight"), shipment.weight], [t("shipment.vehicleType"), t(`shipment.vehicle${(shipment.vehicle_type||"flatbed").charAt(0).toUpperCase()+(shipment.vehicle_type||"flatbed").slice(1)}`)], [t("shipment.expectedPrice"), shipment.expected_price ? `${shipment.expected_price} ${t("common.currency")}` : "—"]].map(([l, v], i) => (
+          {[[t("shipment.category"), shipment.category], [t("shipment.weight"), shipment.weight], [t("shipment.vehicleType"), vehicleTypeLabel(t, shipment.vehicle_type)], [t("shipment.advisoryPrice"), shipment.advisory_price != null ? `${shipment.advisory_price} ${shipment.pricing_currency || t("common.currency")}` : "—"], [t("shipment.customerMaxOffer"), shipment.customer_max_offer != null ? `${shipment.customer_max_offer} ${shipment.pricing_currency || t("common.currency")}` : "—"]].map(([l, v], i) => (
             <div key={i} className="bg-slate-50 rounded-lg p-2.5"><div className="text-xs text-slate-400">{l}</div><div className="font-semibold text-slate-700">{v || "—"}</div></div>
           ))}
         </div>

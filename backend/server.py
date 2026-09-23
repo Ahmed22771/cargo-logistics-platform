@@ -27,7 +27,9 @@ from seed import run_seed
 from models import (
     OtpRequest, OtpVerify, AdminLogin, ProfileUpdate, DocumentSubmit,
     ShipmentCreate, BidCreate, TripStatusUpdate, DeliveryConfirm, ReviewCreate, VerifyAction, DisputeCreate,
+    PricingQuoteBody,
 )
+from pricing_service import pricing_service, clamp_offer
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cargo")
@@ -203,6 +205,29 @@ async def submit_documents(body: DocumentSubmit, user: dict = Depends(require_ro
 
 
 # ================= SHIPMENTS (customer) =================
+def _pricing_inputs(data: dict) -> dict:
+    return {
+        "pickup_location": data.get("pickup_location"),
+        "delivery_location": data.get("delivery_location"),
+        "vehicle_type": data.get("vehicle_type") or "",
+        "fragile": bool(data.get("fragile")),
+        "loading_service": bool(data.get("loading_service")),
+        "unloading_service": bool(data.get("unloading_service")),
+    }
+
+
+@api.post("/pricing/quote")
+async def pricing_quote(body: PricingQuoteBody, user: dict = Depends(require_roles("customer"))):
+    """Advisory pricing preview for the create-shipment screen. Authoritative
+    recompute still happens server-side on shipment create/update."""
+    data = body.model_dump()
+    if data.get("pickup_location"):
+        data["pickup_location"] = dict(data["pickup_location"])
+    if data.get("delivery_location"):
+        data["delivery_location"] = dict(data["delivery_location"])
+    return pricing_service.quote(_pricing_inputs(data))
+
+
 @api.post("/shipments")
 async def create_shipment(body: ShipmentCreate, user: dict = Depends(require_roles("customer"))):
     status = "PUBLISHED" if body.status == "PUBLISHED" else "DRAFT"
@@ -219,6 +244,17 @@ async def create_shipment(body: ShipmentCreate, user: dict = Depends(require_rol
         data["pickup_location"] = dict(data["pickup_location"])
     if data.get("delivery_location"):
         data["delivery_location"] = dict(data["delivery_location"])
+    # Pricing snapshot (server-authoritative; never trust client-supplied prices).
+    requested_max_offer = data.pop("customer_max_offer", None)
+    snap = pricing_service.quote(_pricing_inputs(data))
+    data["advisory_price"] = snap["advisory_price"]
+    data["pricing_min"] = snap["pricing_min"]
+    data["pricing_max"] = snap["pricing_max"]
+    data["pricing_currency"] = snap["pricing_currency"]
+    data["pricing_version"] = snap["pricing_version"]
+    data["customer_max_offer"] = clamp_offer(
+        requested_max_offer, snap["pricing_min"], snap["pricing_max"], snap["advisory_price"]
+    )
     doc = {
         "id": uid(), "customer_id": user["id"], "customer_name": user.get("name", ""),
         "status": status, "accepted_bid_id": None, "assigned_driver_id": None, "trip_id": None,
@@ -262,6 +298,19 @@ async def update_shipment(sid: str, body: ShipmentCreate, user: dict = Depends(r
         data["pickup_location"] = dict(data["pickup_location"])
     if data.get("delivery_location"):
         data["delivery_location"] = dict(data["delivery_location"])
+    # Recompute the pricing snapshot from the (possibly edited) inputs.
+    requested_max_offer = data.pop("customer_max_offer", None)
+    snap = pricing_service.quote(_pricing_inputs(data))
+    data["advisory_price"] = snap["advisory_price"]
+    data["pricing_min"] = snap["pricing_min"]
+    data["pricing_max"] = snap["pricing_max"]
+    data["pricing_currency"] = snap["pricing_currency"]
+    data["pricing_version"] = snap["pricing_version"]
+    if requested_max_offer is None:
+        requested_max_offer = s.get("customer_max_offer")
+    data["customer_max_offer"] = clamp_offer(
+        requested_max_offer, snap["pricing_min"], snap["pricing_max"], snap["advisory_price"]
+    )
     data["status"] = new_status
     data["updated_at"] = now_iso()
     await db.shipments.update_one({"id": sid}, {"$set": data})
@@ -329,6 +378,14 @@ async def submit_bid(sid: str, body: BidCreate, user: dict = Depends(require_rol
     s = await db.shipments.find_one({"id": sid})
     if not s or s["status"] not in ("PUBLISHED", "BIDDING"):
         raise HTTPException(status_code=400, detail="Shipment not open for bids")
+    # Enforce the customer's maximum offer (only when the shipment carries one —
+    # older shipments without this field keep the previous behaviour).
+    max_offer = s.get("customer_max_offer")
+    if max_offer is not None and body.price > float(max_offer):
+        raise HTTPException(status_code=400, detail={
+            "code": "BID_EXCEEDS_MAX_OFFER", "max_offer": max_offer,
+            "currency": s.get("pricing_currency", "OMR"),
+        })
     existing = await db.bids.find_one({"shipment_id": sid, "driver_id": user["id"], "status": "PENDING"})
     if existing:
         raise HTTPException(status_code=400, detail="ALREADY_BID")

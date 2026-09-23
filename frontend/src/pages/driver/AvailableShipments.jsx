@@ -4,6 +4,7 @@ import { Package, Truck, Gavel } from "lucide-react";
 import { Card, Spinner, PageHeader, EmptyState, Btn, Field, Input, Textarea } from "../../components/ui-kit";
 import { StatusBadge } from "../../components/StatusBadge";
 import { RouteDisplay } from "../../components/RouteDisplay";
+import { vehicleTypeLabel } from "../../lib/vehicleTypes";
 import { VerificationBanner } from "./VerificationBanner";
 import { useI18n } from "../../i18n";
 import { useAuth } from "../../context/AuthContext";
@@ -28,6 +29,8 @@ function BidModal({ shipment, onClose, onSubmitted }) {
           .filter(Boolean)
           .join(" • ");
         toast.error(detail ? `${t("bid.notEligible")}: ${detail}` : t("bid.notEligible"));
+      } else if (e?.response?.data?.detail?.code === "BID_EXCEEDS_MAX_OFFER") {
+        toast.error(t("bid.exceedsMaxOffer"));
       } else {
         toast.error(apiErr(e));
       }
@@ -54,6 +57,12 @@ function BidModal({ shipment, onClose, onSubmitted }) {
         </div>
         <div className="px-6 overflow-y-auto flex-1">
           <div className="space-y-4">
+            {shipment.customer_max_offer != null && (
+              <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm" data-testid="bid-max-offer-hint">
+                <span className="text-slate-500">{t("bid.maxOfferHint")}: </span>
+                <span className="font-bold text-[#F1701E]">{shipment.customer_max_offer} {shipment.pricing_currency || t("common.currency")}</span>
+              </div>
+            )}
             <Field label={t("bid.price")} required hint={t("bid.enterPrice")}>
               <Input type="number" data-testid="bid-price-input" value={price} onChange={(e) => setPrice(e.target.value)} className="force-ltr" placeholder="0.000" />
             </Field>
@@ -96,11 +105,20 @@ export default function AvailableShipments() {
             <Card key={s.id} data-testid={`available-${s.id}`}>
               <div className="flex items-start justify-between gap-3 mb-3">
                 <div><h3 className="font-bold text-[#16233A]">{s.title}</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">{s.category} · {s.weight} kg · {t(`shipment.vehicle${(s.vehicle_type||"flatbed").charAt(0).toUpperCase()+(s.vehicle_type||"flatbed").slice(1)}`)}</p></div>
+                  <p className="text-xs text-slate-400 mt-0.5">{s.category} · {s.weight} kg · {vehicleTypeLabel(t, s.vehicle_type)}</p></div>
                 <StatusBadge status={s.status} />
               </div>
               <RouteDisplay pickup={s.pickup_location} delivery={s.delivery_location} />
-              {s.expected_price && <div className="text-sm text-slate-500 mt-3">{t("shipment.expectedPrice")}: <span className="font-bold text-[#F1701E]">{s.expected_price} {t("common.currency")}</span></div>}
+              {s.customer_max_offer != null && (
+                <div className="text-sm text-slate-500 mt-3" data-testid={`max-offer-${s.id}`}>
+                  {t("shipment.customerMaxOffer")}: <span className="font-bold text-[#F1701E]">{s.customer_max_offer} {s.pricing_currency || t("common.currency")}</span>
+                </div>
+              )}
+              {s.advisory_price != null && (
+                <div className="text-xs text-slate-400 mt-1">
+                  {t("shipment.advisoryPrice")}: {s.advisory_price} {s.pricing_currency || t("common.currency")}
+                </div>
+              )}
               <div className="mt-4">
                 {s.already_bid ? (
                   <div className="text-sm font-semibold text-emerald-600 flex items-center gap-1.5"><Gavel className="w-4 h-4" /> {t("bid.alreadyBid")}</div>

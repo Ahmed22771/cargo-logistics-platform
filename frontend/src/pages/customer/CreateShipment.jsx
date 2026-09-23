@@ -1,10 +1,11 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Check, Image as ImageIcon, X, MapPin, Calendar, Package2 } from "lucide-react";
+import { ArrowLeft, Check, Image as ImageIcon, X, MapPin, Calendar, Package2, Truck, Wallet } from "lucide-react";
 import { Card, Btn, Field, Input, Textarea } from "../../components/ui-kit";
 import { MapPicker } from "../../components/MapPicker";
 import { RouteDisplay } from "../../components/RouteDisplay";
+import { VEHICLE_TYPES } from "../../lib/vehicleTypes";
 import { useI18n } from "../../i18n";
 import api, { apiErr } from "../../lib/api";
 
@@ -15,6 +16,7 @@ export default function CreateShipment() {
   const [form, setForm] = useState({
     title: "",
     images: [],
+    vehicle_type: "",
     fragile: false,
     loading_service: false,
     unloading_service: false,
@@ -25,7 +27,35 @@ export default function CreateShipment() {
     delivery_date: "",
     delivery_time: "",
   });
+  const [pricing, setPricing] = useState(null); // {advisory_price, pricing_min, pricing_max, pricing_currency}
+  const [maxOffer, setMaxOffer] = useState(null);
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
+
+  // Advisory pricing preview — recomputed server-side whenever the pricing
+  // inputs change (vehicle type + both locations). The map logic is untouched.
+  useEffect(() => {
+    if (!form.vehicle_type || !form.pickup_location || !form.delivery_location) {
+      setPricing(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .post("/pricing/quote", {
+        pickup_location: form.pickup_location,
+        delivery_location: form.delivery_location,
+        vehicle_type: form.vehicle_type,
+        fragile: form.fragile,
+        loading_service: form.loading_service,
+        unloading_service: form.unloading_service,
+      })
+      .then(({ data }) => {
+        if (cancelled) return;
+        setPricing(data);
+        setMaxOffer(data.advisory_price); // default the slider to the advisory price
+      })
+      .catch(() => { if (!cancelled) setPricing(null); });
+    return () => { cancelled = true; };
+  }, [form.vehicle_type, form.pickup_location, form.delivery_location, form.fragile, form.loading_service, form.unloading_service]);
 
   const handlePhoto = (event) => {
     const file = event.target.files?.[0];
@@ -55,6 +85,10 @@ export default function CreateShipment() {
       toast.error(t("shipment.missingDelivery"));
       return;
     }
+    if (!form.vehicle_type) {
+      toast.error(t("shipment.selectVehicleType"));
+      return;
+    }
     setSaving(true);
     try {
       await api.post("/shipments", {
@@ -68,11 +102,12 @@ export default function CreateShipment() {
         pickup_time: form.pickup_time,
         delivery_date: form.delivery_date,
         delivery_time: form.delivery_time,
-        vehicle_type: "",
+        vehicle_type: form.vehicle_type,
         required_capacity: "",
         loading_service: form.loading_service,
         unloading_service: form.unloading_service,
         expected_price: "",
+        customer_max_offer: maxOffer,
         status: "PUBLISHED",
       });
       toast.success(t("shipment.publishedSuccess"));
@@ -158,6 +193,23 @@ export default function CreateShipment() {
               </div>
             )}
           </div>
+
+          {/* Required vehicle type — directly after the shipment description */}
+          <div className="mt-4">
+            <Field label={t("shipment.requiredVehicleType")}>
+              <select
+                data-testid="ship-vehicle-type"
+                value={form.vehicle_type}
+                onChange={(e) => set("vehicle_type", e.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-[#F1701E] focus:outline-none focus:ring-1 focus:ring-[#F1701E]"
+              >
+                <option value="">{t("shipment.selectVehicleType")}</option>
+                {VEHICLE_TYPES.map((v) => (
+                  <option key={v.value} value={v.value}>{t(v.labelKey)}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
         </Card>
 
         {/* 2. From where — pickup map */}
@@ -209,6 +261,49 @@ export default function CreateShipment() {
             >
               <Check className="w-4 h-4" />
               {form.delivery_location.address || t("p11.map.unnamed")}
+            </div>
+          )}
+        </Card>
+
+        {/* Pricing — advisory price + your maximum offer (maps untouched) */}
+        <Card data-testid="section-pricing">
+          <div className="flex items-center gap-2 mb-3">
+            <Wallet className="w-5 h-5 text-[#F1701E]" />
+            <h2 className="font-bold text-base text-[#16233A]">{t("shipment.advisoryPrice")}</h2>
+          </div>
+          {!pricing ? (
+            <p className="text-sm text-slate-400" data-testid="pricing-hint">{t("shipment.pricingSelectFirst")}</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm text-slate-500">{t("shipment.advisoryPrice")}</span>
+                <span className="text-2xl font-extrabold text-[#16233A]" data-testid="advisory-price">
+                  {pricing.advisory_price} <span className="text-sm font-semibold">{pricing.pricing_currency}</span>
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">{t("shipment.advisoryHint")}</p>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold text-slate-700">{t("shipment.yourMaxOffer")}</span>
+                  <span className="text-lg font-bold text-[#F1701E]" data-testid="max-offer-value">
+                    {maxOffer} <span className="text-xs font-semibold">{pricing.pricing_currency}</span>
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  data-testid="max-offer-slider"
+                  min={pricing.pricing_min}
+                  max={pricing.pricing_max}
+                  step={1}
+                  value={maxOffer ?? pricing.advisory_price}
+                  onChange={(e) => setMaxOffer(Number(e.target.value))}
+                  className="w-full accent-[#F1701E]"
+                />
+                <div className="flex justify-between text-[11px] text-slate-400 mt-1 force-ltr">
+                  <span>{pricing.pricing_min}</span>
+                  <span>{pricing.pricing_max}</span>
+                </div>
+              </div>
             </div>
           )}
         </Card>

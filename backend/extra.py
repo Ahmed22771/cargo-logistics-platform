@@ -1138,7 +1138,13 @@ async def provider_submit_bid(sid: str, body: ProviderBidBody, user: dict = Depe
     s = await db.shipments.find_one({"id": sid})
     if not s or s.get("status") not in ("PUBLISHED", "BIDDING"):
         raise HTTPException(status_code=400, detail="Shipment not open for bids")
-    existing = await db.bids.find_one({"shipment_id": sid, "driver_id": drv["id"], "status": "PENDING"})
+    # Enforce the customer's maximum offer (only when present; old shipments exempt).
+    max_offer = s.get("customer_max_offer")
+    if max_offer is not None and float(body.price) > float(max_offer):
+        raise HTTPException(status_code=400, detail={
+            "code": "BID_EXCEEDS_MAX_OFFER", "max_offer": max_offer,
+            "currency": s.get("pricing_currency", "OMR"),
+        })
     if existing:
         raise HTTPException(status_code=400, detail="ALREADY_BID")
     bid = {

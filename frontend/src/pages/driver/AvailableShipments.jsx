@@ -29,8 +29,6 @@ function BidModal({ shipment, onClose, onSubmitted }) {
           .filter(Boolean)
           .join(" • ");
         toast.error(detail ? `${t("bid.notEligible")}: ${detail}` : t("bid.notEligible"));
-      } else if (e?.response?.data?.detail?.code === "BID_EXCEEDS_MAX_OFFER") {
-        toast.error(t("bid.exceedsMaxOffer"));
       } else {
         toast.error(apiErr(e));
       }

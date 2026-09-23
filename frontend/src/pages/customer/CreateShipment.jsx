@@ -265,49 +265,6 @@ export default function CreateShipment() {
           )}
         </Card>
 
-        {/* Pricing — advisory price + your maximum offer (maps untouched) */}
-        <Card data-testid="section-pricing">
-          <div className="flex items-center gap-2 mb-3">
-            <Wallet className="w-5 h-5 text-[#F1701E]" />
-            <h2 className="font-bold text-base text-[#16233A]">{t("shipment.advisoryPrice")}</h2>
-          </div>
-          {!pricing ? (
-            <p className="text-sm text-slate-400" data-testid="pricing-hint">{t("shipment.pricingSelectFirst")}</p>
-          ) : (
-            <div className="space-y-4">
-              <div className="flex items-baseline justify-between">
-                <span className="text-sm text-slate-500">{t("shipment.advisoryPrice")}</span>
-                <span className="text-2xl font-extrabold text-[#16233A]" data-testid="advisory-price">
-                  {pricing.advisory_price} <span className="text-sm font-semibold">{pricing.pricing_currency}</span>
-                </span>
-              </div>
-              <p className="text-xs text-slate-400">{t("shipment.advisoryHint")}</p>
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-semibold text-slate-700">{t("shipment.yourMaxOffer")}</span>
-                  <span className="text-lg font-bold text-[#F1701E]" data-testid="max-offer-value">
-                    {maxOffer} <span className="text-xs font-semibold">{pricing.pricing_currency}</span>
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  data-testid="max-offer-slider"
-                  min={pricing.pricing_min}
-                  max={pricing.pricing_max}
-                  step={1}
-                  value={maxOffer ?? pricing.advisory_price}
-                  onChange={(e) => setMaxOffer(Number(e.target.value))}
-                  className="w-full accent-[#F1701E]"
-                />
-                <div className="flex justify-between text-[11px] text-slate-400 mt-1 force-ltr">
-                  <span>{pricing.pricing_min}</span>
-                  <span>{pricing.pricing_max}</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </Card>
-
         {/* 4. When — combined load and delivery date/time */}
         <Card data-testid="section-when">
           <div className="flex items-center gap-2 mb-3">
@@ -394,6 +351,51 @@ export default function CreateShipment() {
               </label>
             ))}
           </div>
+        </Card>
+
+        {/* Pricing — advisory price + customer target price. Placed AFTER services
+            so it reflects all price-affecting inputs. Maps are untouched. */}
+        <Card data-testid="section-pricing">
+          <div className="flex items-center gap-2 mb-3">
+            <Wallet className="w-5 h-5 text-[#F1701E]" />
+            <h2 className="font-bold text-base text-[#16233A]">{t("shipment.advisoryPrice")}</h2>
+          </div>
+          {!pricing ? (
+            <p className="text-sm text-slate-400" data-testid="pricing-hint">{t("shipment.pricingSelectFirst")}</p>
+          ) : (
+            <div className="space-y-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm text-slate-500">{t("shipment.advisoryPrice")}</span>
+                <span className="text-2xl font-extrabold text-[#16233A]" data-testid="advisory-price">
+                  {pricing.advisory_price} <span className="text-sm font-semibold">{pricing.pricing_currency}</span>
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">{t("shipment.advisoryHint")}</p>
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold text-slate-700">{t("shipment.targetPrice")}</span>
+                  <span className="text-lg font-bold text-[#F1701E]" data-testid="max-offer-value">
+                    {maxOffer} <span className="text-xs font-semibold">{pricing.pricing_currency}</span>
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  data-testid="max-offer-slider"
+                  min={pricing.pricing_min}
+                  max={pricing.pricing_max}
+                  step={1}
+                  value={maxOffer ?? pricing.advisory_price}
+                  onChange={(e) => setMaxOffer(Number(e.target.value))}
+                  className="w-full accent-[#F1701E]"
+                />
+                <div className="flex justify-between text-[11px] text-slate-400 mt-1 force-ltr">
+                  <span>{pricing.pricing_min}</span>
+                  <span>{pricing.pricing_max}</span>
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">{t("shipment.targetHint")}</p>
+              </div>
+            </div>
+          )}
         </Card>
 
         {/* 6. Summary + Publish button at bottom */}

@@ -26,11 +26,7 @@ function BidModal({ shipment, drivers, onClose, onSubmitted }) {
       onSubmitted && onSubmitted();
       onClose();
     } catch (e) {
-      if (e?.response?.data?.detail?.code === "BID_EXCEEDS_MAX_OFFER") {
-        toast.error(t("bid.exceedsMaxOffer"));
-      } else {
-        toast.error(apiErr(e));
-      }
+      toast.error(apiErr(e));
     } finally { setBusy(false); }
   };
   return (

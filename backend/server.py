@@ -378,14 +378,9 @@ async def submit_bid(sid: str, body: BidCreate, user: dict = Depends(require_rol
     s = await db.shipments.find_one({"id": sid})
     if not s or s["status"] not in ("PUBLISHED", "BIDDING"):
         raise HTTPException(status_code=400, detail="Shipment not open for bids")
-    # Enforce the customer's maximum offer (only when the shipment carries one —
-    # older shipments without this field keep the previous behaviour).
-    max_offer = s.get("customer_max_offer")
-    if max_offer is not None and body.price > float(max_offer):
-        raise HTTPException(status_code=400, detail={
-            "code": "BID_EXCEEDS_MAX_OFFER", "max_offer": max_offer,
-            "currency": s.get("pricing_currency", "OMR"),
-        })
+    # NOTE: customer_max_offer is the customer's TARGET/budget price, NOT a cap.
+    # Drivers/providers may bid below, equal to, or above it — the customer
+    # decides when comparing offers. No max-offer rejection here by design.
     existing = await db.bids.find_one({"shipment_id": sid, "driver_id": user["id"], "status": "PENDING"})
     if existing:
         raise HTTPException(status_code=400, detail="ALREADY_BID")

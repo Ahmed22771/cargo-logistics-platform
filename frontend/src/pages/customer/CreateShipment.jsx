@@ -330,7 +330,7 @@ export default function CreateShipment() {
           <h2 className="font-bold text-base text-[#16233A] mb-3">
             {t("shipment.servicesTitle")}
           </h2>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-row flex-wrap gap-4">
             {[
               ["fragile", t("p11.wiz.fragile")],
               ["loading_service", t("shipment.loadingService")],

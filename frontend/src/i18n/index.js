@@ -25,11 +25,11 @@ export const translations = {
       opportunities: "الفرص", offers: "العروض", drivers: "السائقون", vehicles: "المركبات",
       trips: "الرحلات", reports: "التقارير", users: "المستخدمون", shipments: "الشحنات",
       bids: "العروض", providers: "شركات النقل", customers: "العملاء", auditLog: "سجل التدقيق",
-      finance: "المالية", access: "الصلاحيات والأدوار", disputes: "النزاعات",
+      finance: "الإدارةالمالية", access: "الصلاحيات والأدوار", disputes: "النزاعات",
       operations: "مركز العمليات", settings: "الإعدادات", tracking: "التتبع",
     },
     landing: {
-      heroTitle: "منصة النقل والشحن الرائدة في سلطنة عُمان والشرق الأوسط",
+      heroTitle: "منصة النقل والشحن الرائدة في سلطنة عُمان ",
       heroSub: "نربط الشحنات بالسائقين وشركات النقل المناسبة من لحظة الطلب حتى التسليم",
       ctaPrimary: "ابدأ تجربة CARGO", ctaSecondary: "كيف تعمل CARGO",
       statShipments: "شحنة منجزة", statDrivers: "سائق نشط في عُمان", statResponse: "متوسط وقت الاستجابة",
@@ -133,7 +133,7 @@ export const translations = {
       pendingBanner: "مستنداتك قيد المراجعة من قبل الإدارة",
     },
     admin: {
-      dashboard: "لوحة القيادة", totalShipments: "إجمالي الشحنات", activeShipments: "الشحنات النشطة",
+      dashboard: "لوحة التحكم", totalShipments: "إجمالي الشحنات", activeShipments: "الشحنات النشطة",
       completedShipments: "الشحنات المكتملة", activeTrips: "الرحلات النشطة", totalDrivers: "إجمالي السائقين",
       verifiedDrivers: "السائقون الموثقون", pendingVerification: "بانتظار التوثيق", providers: "شركات النقل",
       recentActivity: "النشاط الأخير", approve: "موافقة", reject: "رفض", suspend: "تعليق",
@@ -141,7 +141,7 @@ export const translations = {
       manageDrivers: "إدارة السائقين", driverApproved: "تمت الموافقة على السائق",
       driverRejected: "تم رفض السائق", driverSuspended: "تم تعليق السائق",
       adminNotes: "ملاحظات الإدارة", action: "الإجراء", entity: "الكيان", result: "النتيجة",
-      timestamp: "الوقت", commandCenter: "مركز القيادة",
+      timestamp: "الوقت", commandCenter: "لوحةإدارة المنصة",
     },
     status: {
       DRAFT: "مسودة", PUBLISHED: "منشورة", BIDDING: "استقبال العروض", DRIVER_SELECTED: "تم اختيار السائق",

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 
 class Location(BaseModel):
@@ -132,6 +132,7 @@ class VehicleBody(BaseModel):
     notes: Optional[str] = ""
     status: Optional[str] = "ACTIVE"  # ACTIVE | INACTIVE | MAINTENANCE
     assigned_driver_id: Optional[str] = None
+
     # Regulatory readiness (Oman). Free-form dict normalized server-side into a
     # known set of keys (operating card / chassis / barcode ...). Optional so old
     # clients that never send it keep working unchanged.
@@ -180,3 +181,238 @@ class DriverRegulatoryBody(BaseModel):
     driver_training_date: Optional[str] = ""
     regulatory_notes: Optional[str] = ""
 
+
+# ================ Contracts & Competition ================
+# These models add only the API/data contracts for the new B2B contract
+# marketplace. They do not alter existing Shipment/Bid/Trip models.
+
+
+class ContractCreate(BaseModel):
+    """Create a master B2B transport contract."""
+
+    title: str
+    description: Optional[str] = ""
+
+    # Optional link to an existing CARGO customer/company account.
+    customer_id: Optional[str] = None
+    customer_name: Optional[str] = ""
+
+    contract_number: Optional[str] = ""
+
+    # FULL = compete for the whole contract
+    # SPLIT = contract can be divided into lots
+    competition_mode: Literal["FULL", "SPLIT"] = "FULL"
+
+    total_units: int = Field(default=1, ge=1)
+    unit_type: Optional[str] = ""  # e.g. container, shipment, load
+
+    cargo_type: Optional[str] = ""
+    vehicle_type: Optional[str] = ""
+    required_capacity: Optional[str] = ""
+
+    pickup_location: Optional[Location] = None
+    delivery_location: Optional[Location] = None
+
+    pickup_date: Optional[str] = ""
+    pickup_time: Optional[str] = ""
+    delivery_date: Optional[str] = ""
+    delivery_time: Optional[str] = ""
+
+    fragile: Optional[bool] = False
+    loading_service: Optional[bool] = False
+    unloading_service: Optional[bool] = False
+
+    special_instructions: Optional[str] = ""
+    terms: Optional[str] = ""
+
+    # Advisory/target value for the whole contract.
+    # This is not a provider bid cap.
+    target_total_price: Optional[float] = Field(default=None, ge=0)
+
+    currency: Optional[str] = "OMR"
+
+    bidding_deadline: Optional[str] = ""
+    start_date: Optional[str] = ""
+    end_date: Optional[str] = ""
+
+    # References to uploaded contract/supporting documents.
+    document_ids: List[str] = []
+
+    status: Literal[
+        "DRAFT",
+        "PUBLISHED",
+        "BIDDING",
+        "UNDER_REVIEW",
+        "AWARDED",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "CANCELLED",
+    ] = "DRAFT"
+
+
+class ContractUpdate(BaseModel):
+    """Partial update for a contract before it reaches a locked state."""
+
+    title: Optional[str] = None
+    description: Optional[str] = None
+    customer_id: Optional[str] = None
+    customer_name: Optional[str] = None
+    contract_number: Optional[str] = None
+
+    competition_mode: Optional[Literal["FULL", "SPLIT"]] = None
+
+    total_units: Optional[int] = Field(default=None, ge=1)
+    unit_type: Optional[str] = None
+
+    cargo_type: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    required_capacity: Optional[str] = None
+
+    pickup_location: Optional[Location] = None
+    delivery_location: Optional[Location] = None
+
+    pickup_date: Optional[str] = None
+    pickup_time: Optional[str] = None
+    delivery_date: Optional[str] = None
+    delivery_time: Optional[str] = None
+
+    fragile: Optional[bool] = None
+    loading_service: Optional[bool] = None
+    unloading_service: Optional[bool] = None
+
+    special_instructions: Optional[str] = None
+    terms: Optional[str] = None
+
+    target_total_price: Optional[float] = Field(default=None, ge=0)
+    currency: Optional[str] = None
+
+    bidding_deadline: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+    document_ids: Optional[List[str]] = None
+
+
+class ContractLotCreate(BaseModel):
+    """A competition lot within a split contract."""
+
+    name: str
+    lot_number: Optional[str] = ""
+    quantity: int = Field(ge=1)
+    unit_type: Optional[str] = ""
+
+    description: Optional[str] = ""
+    vehicle_type: Optional[str] = ""
+    required_capacity: Optional[str] = ""
+
+    pickup_location: Optional[Location] = None
+    delivery_location: Optional[Location] = None
+
+    pickup_date: Optional[str] = ""
+    pickup_time: Optional[str] = ""
+    delivery_date: Optional[str] = ""
+    delivery_time: Optional[str] = ""
+
+    target_price: Optional[float] = Field(default=None, ge=0)
+    currency: Optional[str] = "OMR"
+
+    status: Literal[
+        "DRAFT",
+        "PUBLISHED",
+        "BIDDING",
+        "UNDER_REVIEW",
+        "AWARDED",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "CANCELLED",
+    ] = "DRAFT"
+
+
+class ContractLotUpdate(BaseModel):
+    """Partial update for a contract lot."""
+
+    name: Optional[str] = None
+    lot_number: Optional[str] = None
+    quantity: Optional[int] = Field(default=None, ge=1)
+    unit_type: Optional[str] = None
+
+    description: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    required_capacity: Optional[str] = None
+
+    pickup_location: Optional[Location] = None
+    delivery_location: Optional[Location] = None
+
+    pickup_date: Optional[str] = None
+    pickup_time: Optional[str] = None
+    delivery_date: Optional[str] = None
+    delivery_time: Optional[str] = None
+
+    target_price: Optional[float] = Field(default=None, ge=0)
+    currency: Optional[str] = None
+
+
+class ContractBidCreate(BaseModel):
+    """Provider/company bid against a full contract or a specific lot."""
+
+    # None = compete for the whole contract.
+    # Set when bidding against one specific lot.
+    lot_id: Optional[str] = None
+
+    quantity_offered: int = Field(ge=1)
+
+    # Authoritative amount will be calculated/stored by the backend.
+    unit_price: float = Field(gt=0)
+
+    execution_days: Optional[int] = Field(default=None, ge=1)
+    available_vehicles: Optional[int] = Field(default=None, ge=0)
+
+    notes: Optional[str] = ""
+    document_ids: List[str] = []
+
+    status: Literal[
+        "DRAFT",
+        "SUBMITTED",
+        "UNDER_REVIEW",
+        "SHORTLISTED",
+        "AWARDED",
+        "REJECTED",
+        "WITHDRAWN",
+        "EXPIRED",
+    ] = "SUBMITTED"
+
+
+class ContractBidUpdate(BaseModel):
+    """Allowed editable fields while a bid is still editable."""
+
+    quantity_offered: Optional[int] = Field(default=None, ge=1)
+    unit_price: Optional[float] = Field(default=None, gt=0)
+
+    execution_days: Optional[int] = Field(default=None, ge=1)
+    available_vehicles: Optional[int] = Field(default=None, ge=0)
+
+    notes: Optional[str] = None
+    document_ids: Optional[List[str]] = None
+
+
+class ContractAwardCreate(BaseModel):
+    """Admin award/allocation decision derived from a submitted bid."""
+
+    bid_id: str
+    provider_id: str
+
+    # Supports full or partial award.
+    quantity_awarded: int = Field(ge=1)
+
+    # Normally inherited from the accepted bid and revalidated server-side.
+    unit_price: Optional[float] = Field(default=None, gt=0)
+
+    notes: Optional[str] = ""
+
+    status: Literal[
+        "AWARDED",
+        "ACCEPTED",
+        "IN_PROGRESS",
+        "COMPLETED",
+        "CANCELLED",
+    ] = "AWARDED"

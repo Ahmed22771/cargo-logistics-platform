@@ -1,7 +1,21 @@
 import React, { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Package, Truck, Gavel } from "lucide-react";
-import { Card, Spinner, PageHeader, EmptyState, Btn, Field, Input, Textarea } from "../../components/ui-kit";
+import {
+  Package,
+  Gavel,
+  CheckCircle2,
+  Edit3,
+} from "lucide-react";
+import {
+  Card,
+  Spinner,
+  PageHeader,
+  EmptyState,
+  Btn,
+  Field,
+  Input,
+  Textarea,
+} from "../../components/ui-kit";
 import { StatusBadge } from "../../components/StatusBadge";
 import { RouteDisplay } from "../../components/RouteDisplay";
 import { vehicleTypeLabel } from "../../lib/vehicleTypes";
@@ -11,65 +25,365 @@ import { useAuth } from "../../context/AuthContext";
 import api, { apiErr, eligibilityError } from "../../lib/api";
 
 function BidModal({ shipment, onClose, onSubmitted }) {
-  const { t } = useI18n();
-  const [price, setPrice] = useState("");
+  const { t, lang } = useI18n();
+
+  const customerPrice = Number(shipment?.customer_max_offer);
+
+  const hasCustomerPrice =
+    shipment?.customer_max_offer != null &&
+    Number.isFinite(customerPrice) &&
+    customerPrice > 0;
+
+  const [priceMode, setPriceMode] = useState(
+    hasCustomerPrice ? "customer" : "custom"
+  );
+
+  const [price, setPrice] = useState(
+    hasCustomerPrice ? String(customerPrice) : ""
+  );
+
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const currency =
+    shipment?.pricing_currency || t("common.currency");
+
+  const selectCustomerPrice = () => {
+    if (!hasCustomerPrice || busy) return;
+
+    setPriceMode("customer");
+    setPrice(String(customerPrice));
+  };
+
+  const selectCustomPrice = () => {
+    if (busy) return;
+
+    setPriceMode("custom");
+    setPrice("");
+  };
+
   const submit = async () => {
-    if (busy) return; // prevent double-submit
-    const p = parseFloat(price);
-    if (!p || p <= 0) { toast.error(t("bid.priceRequired")); return; }
+    if (busy) return;
+
+    let p;
+
+    // الحالة الأولى:
+    // الموافقة على سعر العميل
+    if (priceMode === "customer") {
+      if (!hasCustomerPrice) {
+        toast.error(
+          t(
+            "bid.customerPriceUnavailable",
+            lang === "ar"
+              ? "سعر العميل غير متاح لهذه الشحنة."
+              : "The customer's price is not available for this shipment."
+          )
+        );
+        return;
+      }
+
+      p = customerPrice;
+    }
+
+    // الحالة الثانية:
+    // السائق يحدد سعرًا مختلفًا
+    else {
+      p = parseFloat(price);
+
+      if (!p || p <= 0) {
+        toast.error(t("bid.priceRequired"));
+        return;
+      }
+    }
+
     setBusy(true);
-    try { await api.post(`/shipments/${shipment.id}/bids`, { price: p, note }); toast.success(t("bid.submitted")); onSubmitted(); }
-    catch (e) {
+
+    try {
+      await api.post(`/shipments/${shipment.id}/bids`, {
+        price: p,
+        note,
+      });
+
+      toast.success(t("bid.submitted"));
+
+      onSubmitted();
+    } catch (e) {
       const elig = eligibilityError(e);
+
       if (elig) {
         const detail = (elig.reasons || [])
-          .map((r) => t(`bid.eligibilityReasons.${r?.code}`, r?.message || ""))
+          .map((r) =>
+            t(
+              `bid.eligibilityReasons.${r?.code}`,
+              r?.message || ""
+            )
+          )
           .filter(Boolean)
           .join(" • ");
-        toast.error(detail ? `${t("bid.notEligible")}: ${detail}` : t("bid.notEligible"));
+
+        toast.error(
+          detail
+            ? `${t("bid.notEligible")}: ${detail}`
+            : t("bid.notEligible")
+        );
       } else {
         toast.error(apiErr(e));
       }
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       data-testid="bid-modal"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          onClose();
+        }
+      }}
     >
       <div
         className="absolute inset-0 bg-black/50"
         data-testid="bid-modal-overlay"
         onClick={onClose}
       />
+
       <div
-        className="relative bg-white w-full max-w-md rounded-2xl shadow-xl max-h-[85vh] flex flex-col animate-fade-in"
+        className="relative flex max-h-[90vh] w-full max-w-md flex-col overflow-hidden rounded-2xl bg-white shadow-xl animate-fade-in"
         onClick={(e) => e.stopPropagation()}
+        dir={lang === "ar" ? "rtl" : "ltr"}
       >
-        <div className="p-6 pb-3 shrink-0">
-          <h2 className="font-bold text-lg text-[#16233A] mb-1">{t("bid.submit")}</h2>
-          <p className="text-sm text-slate-400 line-clamp-2">{shipment.title}</p>
+        {/* Header */}
+        <div className="shrink-0 p-6 pb-3">
+          <h2 className="mb-1 text-lg font-bold text-[#16233A]">
+            {t("bid.submit")}
+          </h2>
+
+          <p className="line-clamp-2 text-sm text-slate-400">
+            {shipment.title}
+          </p>
         </div>
-        <div className="px-6 overflow-y-auto flex-1">
+
+        {/* Content */}
+        <div className="flex-1 overflow-y-auto px-6">
           <div className="space-y-4">
-            {shipment.customer_max_offer != null && (
-              <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm" data-testid="bid-max-offer-hint">
-                <span className="text-slate-500">{t("bid.maxOfferHint")}: </span>
-                <span className="font-bold text-[#F1701E]">{shipment.customer_max_offer} {shipment.pricing_currency || t("common.currency")}</span>
+
+            {/* Customer Price */}
+            {hasCustomerPrice && (
+              <div
+                className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+                data-testid="bid-customer-price"
+              >
+                <span className="text-slate-500">
+                  {t(
+                    "bid.customerPrice",
+                    lang === "ar"
+                      ? "سعر العميل"
+                      : "Customer price"
+                  )}
+                  :{" "}
+                </span>
+
+                <span className="font-bold text-[#F1701E]">
+                  {customerPrice} {currency}
+                </span>
               </div>
             )}
-            <Field label={t("bid.price")} required hint={t("bid.enterPrice")}>
-              <Input type="number" data-testid="bid-price-input" value={price} onChange={(e) => setPrice(e.target.value)} className="force-ltr" placeholder="0.000" />
+
+            {/* Offer Type */}
+            <div className="space-y-3">
+              <p className="text-sm font-semibold text-[#16233A]">
+                {t(
+                  "bid.chooseOfferType",
+                  lang === "ar"
+                    ? "كيف تريد تقديم عرضك؟"
+                    : "How would you like to submit your offer?"
+                )}
+              </p>
+
+              {/* Option 1: Accept Customer Price */}
+              {hasCustomerPrice && (
+                <button
+                  type="button"
+                  data-testid="bid-customer-price-option"
+                  onClick={selectCustomerPrice}
+                  disabled={busy}
+                  className={`flex w-full items-start gap-3 rounded-xl border p-4 text-start transition ${
+                    priceMode === "customer"
+                      ? "border-emerald-500 bg-emerald-50 ring-1 ring-emerald-500"
+                      : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  <span
+                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                      priceMode === "customer"
+                        ? "border-emerald-600 bg-emerald-600 text-white"
+                        : "border-slate-300 bg-white"
+                    }`}
+                  >
+                    {priceMode === "customer" && (
+                      <CheckCircle2 size={14} />
+                    )}
+                  </span>
+
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="font-bold text-slate-800">
+                      {t(
+                        "bid.acceptCustomerPrice",
+                        lang === "ar"
+                          ? "الموافقة على سعر العميل"
+                          : "Accept customer price"
+                      )}
+                    </span>
+
+                    <span className="mt-1 text-sm text-slate-500">
+                      {customerPrice} {currency}
+                    </span>
+                  </span>
+                </button>
+              )}
+
+              {/* Option 2: Different Price */}
+              <button
+                type="button"
+                data-testid="bid-custom-price-option"
+                onClick={selectCustomPrice}
+                disabled={busy}
+                className={`flex w-full items-start gap-3 rounded-xl border p-4 text-start transition ${
+                  priceMode === "custom"
+                    ? "border-[#F1701E] bg-orange-50 ring-1 ring-[#F1701E]"
+                    : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+                } disabled:cursor-not-allowed disabled:opacity-60`}
+              >
+                <span
+                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                    priceMode === "custom"
+                      ? "border-[#F1701E] bg-[#F1701E] text-white"
+                      : "border-slate-300 bg-white"
+                  }`}
+                >
+                  {priceMode === "custom" && (
+                    <CheckCircle2 size={14} />
+                  )}
+                </span>
+
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="inline-flex items-center gap-2 font-bold text-slate-800">
+                    <Edit3 size={16} />
+
+                    {t(
+                      "bid.submitDifferentPrice",
+                      lang === "ar"
+                        ? "تقديم عرض بسعر مختلف"
+                        : "Submit a different price"
+                    )}
+                  </span>
+
+                  <span className="mt-1 text-sm text-slate-500">
+                    {t(
+                      "bid.driverSetsPrice",
+                      lang === "ar"
+                        ? "السائق يحدد السعر الذي يريد تقديمه."
+                        : "The driver sets the price for the offer."
+                    )}
+                  </span>
+                </span>
+              </button>
+            </div>
+
+            {/* Custom Price Input */}
+            {priceMode === "custom" && (
+              <Field
+                label={t(
+                  "bid.price",
+                  lang === "ar"
+                    ? "السعر الذي تقدمه"
+                    : "Your offer price"
+                )}
+                required
+                hint={t("bid.enterPrice")}
+              >
+                <Input
+                  type="number"
+                  min="0.001"
+                  step="0.001"
+                  data-testid="bid-price-input"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  className="force-ltr"
+                  placeholder="0.000"
+                  disabled={busy}
+                />
+              </Field>
+            )}
+
+            {/* Selected Customer Price */}
+            {priceMode === "customer" &&
+              hasCustomerPrice && (
+                <div
+                  className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3"
+                  data-testid="bid-selected-customer-price"
+                >
+                  <div className="text-xs font-medium text-emerald-700">
+                    {t(
+                      "bid.selectedPrice",
+                      lang === "ar"
+                        ? "السعر المعتمد للعرض"
+                        : "Offer price"
+                    )}
+                  </div>
+
+                  <div className="mt-1 text-lg font-bold text-emerald-800">
+                    {customerPrice} {currency}
+                  </div>
+                </div>
+              )}
+
+            {/* Note */}
+            <Field label={t("bid.note")}>
+              <Textarea
+                rows={2}
+                data-testid="bid-note-input"
+                value={note}
+                onChange={(e) => setNote(e.target.value)}
+                disabled={busy}
+              />
             </Field>
-            <Field label={t("bid.note")}><Textarea rows={2} data-testid="bid-note-input" value={note} onChange={(e) => setNote(e.target.value)} /></Field>
           </div>
         </div>
-        <div className="p-6 pt-3 shrink-0 border-t border-slate-100 flex gap-2">
-          <Btn variant="secondary" onClick={onClose} disabled={busy} data-testid="cancel-bid-btn" className="flex-1 justify-center">{t("common.cancel")}</Btn>
-          <Btn variant="accent" onClick={submit} disabled={busy} data-testid="submit-bid-btn" className="flex-1 justify-center"><Gavel className="w-4 h-4" /> {t("bid.submit")}</Btn>
+
+        {/* Footer */}
+        <div className="shrink-0 border-t border-slate-100 p-6 pt-3">
+          <div className="flex gap-2">
+            <Btn
+              variant="secondary"
+              onClick={onClose}
+              disabled={busy}
+              data-testid="cancel-bid-btn"
+              className="flex-1 justify-center"
+            >
+              {t("common.cancel")}
+            </Btn>
+
+            <Btn
+              variant="accent"
+              onClick={submit}
+              disabled={busy}
+              data-testid="submit-bid-btn"
+              className="flex-1 justify-center"
+            >
+              <Gavel className="h-4 w-4" />
+
+              {t(
+                "bid.confirmOffer",
+                lang === "ar"
+                  ? "تأكيد العرض"
+                  : "Confirm offer"
+              )}
+            </Btn>
+          </div>
         </div>
       </div>
     </div>
@@ -79,56 +393,144 @@ function BidModal({ shipment, onClose, onSubmitted }) {
 export default function AvailableShipments() {
   const { t } = useI18n();
   const { user } = useAuth();
+
   const [shipments, setShipments] = useState(null);
   const [modal, setModal] = useState(null);
-  const approved = user?.verification_status === "APPROVED";
+
+  const approved =
+    user?.verification_status === "APPROVED";
 
   const load = () => {
-    if (!approved) { setShipments([]); return; }
-    api.get("/marketplace/shipments").then(({ data }) => setShipments(data)).catch(() => setShipments([]));
+    if (!approved) {
+      setShipments([]);
+      return;
+    }
+
+    api
+      .get("/marketplace/shipments")
+      .then(({ data }) => setShipments(data))
+      .catch(() => setShipments([]));
   };
+
   useEffect(load, [approved]);
 
-  if (shipments === null) return <Spinner label={t("common.loading")} />;
+  if (shipments === null) {
+    return (
+      <Spinner label={t("common.loading")} />
+    );
+  }
 
   return (
     <div>
-      <PageHeader title={t("nav.availableShipments")} />
+      <PageHeader
+        title={t("nav.availableShipments")}
+      />
+
       <VerificationBanner />
+
       {!approved ? null : shipments.length === 0 ? (
-        <Card><EmptyState icon={Package} title={t("shipment.noShipments")} /></Card>
+        <Card>
+          <EmptyState
+            icon={Package}
+            title={t("shipment.noShipments")}
+          />
+        </Card>
       ) : (
         <div className="grid gap-3">
           {shipments.map((s) => (
-            <Card key={s.id} data-testid={`available-${s.id}`}>
-              <div className="flex items-start justify-between gap-3 mb-3">
-                <div><h3 className="font-bold text-[#16233A]">{s.title}</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">{s.category} · {s.weight} kg · {vehicleTypeLabel(t, s.vehicle_type)}</p></div>
+            <Card
+              key={s.id}
+              data-testid={`available-${s.id}`}
+            >
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-[#16233A]">
+                    {s.title}
+                  </h3>
+
+                  <p className="mt-0.5 text-xs text-slate-400">
+                    {s.category} · {s.weight} kg ·{" "}
+                    {vehicleTypeLabel(
+                      t,
+                      s.vehicle_type
+                    )}
+                  </p>
+                </div>
+
                 <StatusBadge status={s.status} />
               </div>
-              <RouteDisplay pickup={s.pickup_location} delivery={s.delivery_location} />
+
+              <RouteDisplay
+                pickup={s.pickup_location}
+                delivery={s.delivery_location}
+              />
+
+              {/* Customer Price */}
               {s.customer_max_offer != null && (
-                <div className="text-sm text-slate-500 mt-3" data-testid={`max-offer-${s.id}`}>
-                  {t("shipment.customerMaxOffer")}: <span className="font-bold text-[#F1701E]">{s.customer_max_offer} {s.pricing_currency || t("common.currency")}</span>
+                <div
+                  className="mt-3 text-sm text-slate-500"
+                  data-testid={`max-offer-${s.id}`}
+                >
+                  {t(
+                    "shipment.customerMaxOffer"
+                  )}
+                  :{" "}
+                  <span className="font-bold text-[#F1701E]">
+                    {s.customer_max_offer}{" "}
+                    {s.pricing_currency ||
+                      t("common.currency")}
+                  </span>
                 </div>
               )}
+
+              {/* Advisory Price */}
               {s.advisory_price != null && (
-                <div className="text-xs text-slate-400 mt-1">
-                  {t("shipment.advisoryPrice")}: {s.advisory_price} {s.pricing_currency || t("common.currency")}
+                <div className="mt-1 text-xs text-slate-400">
+                  {t(
+                    "shipment.advisoryPrice"
+                  )}
+                  :{" "}
+                  {s.advisory_price}{" "}
+                  {s.pricing_currency ||
+                    t("common.currency")}
                 </div>
               )}
+
               <div className="mt-4">
                 {s.already_bid ? (
-                  <div className="text-sm font-semibold text-emerald-600 flex items-center gap-1.5"><Gavel className="w-4 h-4" /> {t("bid.alreadyBid")}</div>
+                  <div className="flex items-center gap-1.5 text-sm font-semibold text-emerald-600">
+                    <Gavel className="h-4 w-4" />
+
+                    {t("bid.alreadyBid")}
+                  </div>
                 ) : (
-                  <Btn variant="accent" data-testid={`bid-btn-${s.id}`} onClick={() => setModal(s)} className="w-full sm:w-auto"><Gavel className="w-4 h-4" /> {t("bid.submit")}</Btn>
+                  <Btn
+                    variant="accent"
+                    data-testid={`bid-btn-${s.id}`}
+                    onClick={() => setModal(s)}
+                    className="w-full sm:w-auto"
+                  >
+                    <Gavel className="h-4 w-4" />
+
+                    {t("bid.submit")}
+                  </Btn>
                 )}
               </div>
             </Card>
           ))}
         </div>
       )}
-      {modal && <BidModal shipment={modal} onClose={() => setModal(null)} onSubmitted={() => { setModal(null); load(); }} />}
+
+      {modal && (
+        <BidModal
+          shipment={modal}
+          onClose={() => setModal(null)}
+          onSubmitted={() => {
+            setModal(null);
+            load();
+          }}
+        />
+      )}
     </div>
   );
 }
